@@ -1,17 +1,25 @@
 import type { Camera } from "./camera.js";
+import { TILE_SIZE } from "./renderer.js";
+
+export interface InputCallbacks {
+  readonly requestRender: () => void;
+  readonly onTileClick: (tileX: number, tileY: number) => void;
+}
 
 export class InputHandler {
   private dragging = false;
+  private dragMoved = false;
   private lastX = 0;
   private lastY = 0;
 
   constructor(
     canvas: HTMLCanvasElement,
     camera: Camera,
-    requestRender: () => void,
+    callbacks: InputCallbacks,
   ) {
     canvas.addEventListener("mousedown", (e: MouseEvent) => {
       this.dragging = true;
+      this.dragMoved = false;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
     });
@@ -20,18 +28,37 @@ export class InputHandler {
       if (!this.dragging) return;
       const dx = e.clientX - this.lastX;
       const dy = e.clientY - this.lastY;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        this.dragMoved = true;
+      }
       this.lastX = e.clientX;
       this.lastY = e.clientY;
       camera.pan(dx, dy);
-      requestRender();
+      callbacks.requestRender();
     });
 
-    canvas.addEventListener("mouseup", () => {
+    canvas.addEventListener("mouseup", (e: MouseEvent) => {
+      if (!this.dragMoved) {
+        const dpr = window.devicePixelRatio;
+        const screenX = e.clientX * dpr;
+        const screenY = e.clientY * dpr;
+        const { wx, wy } = camera.screenToWorld(
+          screenX,
+          screenY,
+          canvas.width,
+          canvas.height,
+        );
+        const tileX = Math.floor(wx / TILE_SIZE);
+        const tileY = Math.floor(wy / TILE_SIZE);
+        callbacks.onTileClick(tileX, tileY);
+      }
       this.dragging = false;
+      this.dragMoved = false;
     });
 
     canvas.addEventListener("mouseleave", () => {
       this.dragging = false;
+      this.dragMoved = false;
     });
 
     canvas.addEventListener(
@@ -40,7 +67,7 @@ export class InputHandler {
         e.preventDefault();
         const factor = e.deltaY > 0 ? 0.9 : 1.1;
         camera.zoomAt(e.clientX, e.clientY, factor, canvas.width, canvas.height);
-        requestRender();
+        callbacks.requestRender();
       },
       { passive: false },
     );
