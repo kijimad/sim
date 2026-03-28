@@ -6,6 +6,7 @@ import { RouteList } from "./RouteList.js";
 import { RoutePanel } from "./RoutePanel.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { Toolbar } from "./Toolbar.js";
+import { TrainList } from "./TrainList.js";
 
 interface GameUIProps {
   readonly game: Game;
@@ -70,8 +71,10 @@ export function GameUI({ game }: GameUIProps) {
         {snap.toolMode === ToolMode.Route && (
           <RoutePanel
             stops={snap.routeStops}
+            editingRouteId={snap.editingRouteId}
             onConfirm={(mode) => { game.confirmRoute(mode); }}
             onCancel={() => { game.cancelRoute(); }}
+            onRemoveStop={(i) => { game.removeRouteStop(i); }}
           />
         )}
         <RouteList
@@ -79,6 +82,7 @@ export function GameUI({ game }: GameUIProps) {
           lastRouteId={snap.lastRouteId}
           game={game}
         />
+        <TrainList trains={snap.trains} />
       </div>
     </div>
   );

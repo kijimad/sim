@@ -11,6 +11,9 @@ export function StatusPanel({ snap }: StatusPanelProps) {
         <span>${Math.floor(snap.money).toLocaleString()}</span>
         <span>Pop: {snap.totalPopulation}</span>
         <span>Cities: {snap.cities.length}</span>
+        {snap.debug && (
+          <span className="debug-tag">seed:{snap.seed}</span>
+        )}
       </div>
     </div>
   );

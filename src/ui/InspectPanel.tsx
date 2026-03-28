@@ -1,8 +1,43 @@
+import { useState } from "react";
 import type { Game, InspectInfo } from "../game.js";
 
 interface InspectPanelProps {
   readonly info: InspectInfo;
   readonly game: Game;
+}
+
+function EditableName({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (!editing) {
+    return (
+      <span className="editable-name-wrap">
+        <span className="editable-name-text">{value}</span>
+        <button
+          className="edit-btn"
+          onClick={() => { setEditing(true); setDraft(value); }}
+          title="Rename"
+        >
+          ✎
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <input
+      className="name-edit-input"
+      value={draft}
+      autoFocus
+      onChange={(e) => { setDraft(e.target.value); }}
+      onBlur={() => { onSave(draft); setEditing(false); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { onSave(draft); setEditing(false); }
+        if (e.key === "Escape") { setEditing(false); }
+      }}
+    />
+  );
 }
 
 function EdgeInfo({ info, game }: { info: InspectInfo; game: Game }) {
@@ -95,7 +130,11 @@ export function InspectPanel({ info, game }: InspectPanelProps) {
             <div className="inspect-divider" />
             <div className="inspect-row">
               <span className="inspect-label">Node</span>
-              <span>{info.nodeKind} "{info.nodeName}" (#{info.nodeId})</span>
+              <span>{info.nodeKind} (#{info.nodeId})</span>
+            </div>
+            <div className="inspect-row">
+              <span className="inspect-label">Name</span>
+              <EditableName value={info.nodeName ?? ""} onSave={(v) => { game.renameNode(info.nodeId ?? 0, v); }} />
             </div>
             <div className="inspect-row">
               <span className="inspect-label">Trains</span>

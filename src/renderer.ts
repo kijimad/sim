@@ -84,7 +84,7 @@ export class Renderer {
     graph: Graph,
     camera: Camera,
     selectedNodeId: number | null,
-    nodeTrainCounts?: (nodeId: number) => number,
+    nodeInfo?: (nodeId: number) => { trainCount: number; waitingCargo: number },
   ): void {
     const { ctx, canvas } = this;
     camera.applyTransform(ctx, canvas);
@@ -98,8 +98,8 @@ export class Renderer {
     // ノードを上に描画する
     const nodes = graph.getAllNodes();
     for (const node of nodes) {
-      const trainCount = nodeTrainCounts !== undefined ? nodeTrainCounts(node.id) : 0;
-      this.renderNode(node, node.id === selectedNodeId, trainCount);
+      const info = nodeInfo !== undefined ? nodeInfo(node.id) : { trainCount: 0, waitingCargo: 0 };
+      this.renderNode(node, node.id === selectedNodeId, info.trainCount, info.waitingCargo);
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -141,7 +141,7 @@ export class Renderer {
     ctx.stroke();
   }
 
-  private renderNode(node: GraphNode, selected: boolean, trainCount: number): void {
+  private renderNode(node: GraphNode, selected: boolean, trainCount: number, waitingCargo: number): void {
     const { ctx } = this;
     const cx = node.tileX * TILE_SIZE + HALF_TILE;
     const cy = node.tileY * TILE_SIZE + HALF_TILE;
@@ -194,6 +194,26 @@ export class Renderer {
       ctx.fillStyle = "#ffffff";
       ctx.font = `bold ${String(TILE_SIZE * 0.22)}px sans-serif`;
       ctx.fillText(String(trainCount), badgeX, badgeY);
+    }
+
+    // 待機貨物バー（ノードの下に表示）
+    if (waitingCargo > 0) {
+      const barWidth = TILE_SIZE * 0.8;
+      const barHeight = 3;
+      const barX = cx - barWidth / 2;
+      const barY = cy + radius + 4;
+      const fillRatio = Math.min(waitingCargo / 20, 1);
+
+      ctx.fillStyle = "rgba(0, 0, 0, 0.4)";
+      ctx.fillRect(barX, barY, barWidth, barHeight);
+      ctx.fillStyle = "#e0c030";
+      ctx.fillRect(barX, barY, barWidth * fillRatio, barHeight);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `${String(TILE_SIZE * 0.2)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(String(Math.floor(waitingCargo)), cx, barY + barHeight + 1);
     }
   }
 

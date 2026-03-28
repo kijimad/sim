@@ -116,7 +116,7 @@ export class Economy {
       BuildingType.Residence,
       BuildingType.Residence,
       BuildingType.Residence,
-      BuildingType.Residence,
+      BuildingType.Commercial,
     ];
 
     for (const type of layout) {
@@ -266,7 +266,7 @@ export class Economy {
   private createBuilding(type: BuildingType, tileX: number, tileY: number): Building {
     switch (type) {
       case BuildingType.Residence:
-        return { type, tileX, tileY, population: 10, produces: null, consumes: Resource.Goods };
+        return { type, tileX, tileY, population: 10, produces: null, consumes: Resource.Passengers };
       case BuildingType.Commercial:
         return { type, tileX, tileY, population: 5, produces: Resource.Goods, consumes: Resource.Rice };
       case BuildingType.Farm:
@@ -289,12 +289,34 @@ export class Economy {
   }
 
   /**
+   * 指定した駅群で消費される資源の種類を返す
+   */
+  getDemandedResources(nodeIds: readonly number[], graph: Graph): Set<number> {
+    const demanded = new Set<number>();
+    for (const nodeId of nodeIds) {
+      const node = graph.getNode(nodeId);
+      if (node === undefined) continue;
+      for (const building of this.buildings) {
+        if (building.consumes === null) continue;
+        const dx = building.tileX - node.tileX;
+        const dy = building.tileY - node.tileY;
+        if (dx * dx + dy * dy <= STATION_RANGE_SQ) {
+          demanded.add(building.consumes);
+        }
+      }
+    }
+    return demanded;
+  }
+
+  /**
    * 列車が駅に到着した時に呼び出される。
+   * demandedResources: この路線の他の停車駅で消費される資源の集合
    */
   trainArrive(
     nodeId: number,
     carrying: Map<number, number>,
     graph: Graph,
+    demandedResources: Set<number>,
   ): { earned: number; newCargo: Map<number, number> } {
     let earned = 0;
 
@@ -310,7 +332,6 @@ export class Economy {
         const consumed = carrying.get(building.consumes) ?? 0;
         if (consumed > 0) {
           earned += consumed * DELIVERY_REWARD[building.consumes];
-          // 消費は建物の成長を促進する
           building.population += Math.floor(consumed * 0.5);
           carrying.delete(building.consumes);
         }
@@ -319,16 +340,16 @@ export class Economy {
 
     this._money += earned;
 
-    // 待機中の貨物を積み込む
+    // 路線の他の停車駅で需要がある資源のみ積み込む
     const newCargo = new Map<number, number>();
     const stationCargo = this.stationCargo.get(nodeId);
     if (stationCargo !== undefined) {
       for (const [resource, amount] of stationCargo.waiting) {
-        if (amount > 0) {
+        if (amount > 0 && demandedResources.has(resource)) {
           newCargo.set(resource, amount);
+          stationCargo.waiting.set(resource, 0);
         }
       }
-      stationCargo.waiting.clear();
     }
 
     return { earned, newCargo };

@@ -1,6 +1,6 @@
 import type { Graph, GraphEdge } from "./graph.js";
-import { NodeKind, SignalLayout } from "./graph.js";
 import type { PathNode } from "./pathfinding.js";
+import { BlockSystem } from "./block-system.js";
 
 // --- 路線 ---
 
@@ -18,6 +18,7 @@ export const ROUTE_MODE_NAMES: Record<RouteMode, string> = {
 
 export interface Route {
   readonly id: number;
+  name: string;
   /** 訪問するノードIDの順序付きリスト */
   readonly stops: readonly number[];
   readonly mode: RouteMode;
@@ -77,18 +78,29 @@ export class Simulation {
   private trains = new Map<number, Train>();
   private routes = new Map<number, Route>();
   private nextId = 1;
-
-  private edgeReservation = new Map<number, number>();
-  /** nodeId -> Map<trainId, 到着元のedgeId> */
-  private nodeOccupants = new Map<number, Map<number, number>>();
+  readonly blocks = new BlockSystem();
 
   // --- 路線API ---
 
-  addRoute(stops: readonly number[], mode: RouteMode): Route {
+  addRoute(stops: readonly number[], mode: RouteMode, name?: string): Route {
     const id = this.nextId++;
-    const route: Route = { id, stops, mode };
+    const route: Route = { id, name: name ?? `Route ${String(id)}`, stops, mode };
     this.routes.set(id, route);
     return route;
+  }
+
+  renameRoute(id: number, name: string): void {
+    const route = this.routes.get(id);
+    if (route !== undefined) {
+      route.name = name;
+    }
+  }
+
+  updateRouteStops(id: number, stops: readonly number[]): boolean {
+    const route = this.routes.get(id);
+    if (route === undefined) return false;
+    this.routes.set(id, { ...route, stops });
+    return true;
   }
 
   removeRoute(id: number): boolean {
@@ -103,11 +115,23 @@ export class Simulation {
     return [...this.routes.values()];
   }
 
+  /** 路線の全停車駅が順にグラフ上で到達可能か検証する */
+  isRouteValid(stops: readonly number[], graph: Graph): boolean {
+    for (let i = 0; i < stops.length - 1; i++) {
+      const from = stops[i];
+      const to = stops[i + 1];
+      if (from === undefined || to === undefined) return false;
+      if (this.bfsFirstEdge(from, to, graph) === undefined) return false;
+    }
+    return true;
+  }
+
   // --- 列車API ---
 
   addTrain(routeId: number, graph: Graph): void {
     const route = this.routes.get(routeId);
     if (route === undefined || route.stops.length < 2) return;
+    if (!this.isRouteValid(route.stops, graph)) return;
 
     const startNodeId = route.stops[0];
     if (startNodeId === undefined) return;
@@ -132,18 +156,14 @@ export class Simulation {
       cargo: new Map(),
     };
     this.trains.set(id, train);
-    this.addToNode(startNodeId, id, -1);
+    this.blocks.placeAtNode(startNodeId, id);
   }
 
   removeTrain(id: number): boolean {
     const train = this.trains.get(id);
     if (train === undefined) return false;
 
-    if (train.state === TrainState.AtNode) {
-      this.removeFromNode(train.nodeId, id);
-    } else {
-      this.edgeReservation.delete(train.edgeId);
-    }
+    this.blocks.removeTrain(id, train.state, train.nodeId, train.edgeId);
     return this.trains.delete(id);
   }
 
@@ -152,7 +172,7 @@ export class Simulation {
   }
 
   getNodeTrainCount(nodeId: number): number {
-    return this.nodeOccupants.get(nodeId)?.size ?? 0;
+    return this.blocks.getNodeTrainCount(nodeId);
   }
 
   getRouteTrainCount(routeId: number): number {
@@ -173,16 +193,19 @@ export class Simulation {
   onTrainArrive: ((train: Train, nodeId: number) => void) | null = null;
 
   update(dt: number, graph: Graph): void {
+    // フェーズ1: ノード待機中の列車の出発判定（エッジ上の列車より先に処理）
     for (const train of this.trains.values()) {
-      switch (train.state) {
-        case TrainState.AtNode:
-          this.updateAtNode(train, dt, graph);
-          break;
-        case TrainState.OnEdge:
-          this.updateOnEdge(train, dt, graph);
-          break;
+      if (train.state === TrainState.AtNode) {
+        this.updateAtNode(train, dt, graph);
       }
     }
+    // フェーズ2: エッジ上の列車の移動（到着処理含む）
+    for (const train of this.trains.values()) {
+      if (train.state === TrainState.OnEdge) {
+        this.updateOnEdge(train, dt, graph);
+      }
+    }
+
   }
 
   getTrainPositions(graph: Graph): TrainPosition[] {
@@ -198,32 +221,26 @@ export class Simulation {
 
   // --- ノード滞在中 ---
 
+  /**
+   * ノード滞在中の列車: 次の閉塞区間（エッジ）が空いていれば出発する。
+   */
   private updateAtNode(train: Train, dt: number, graph: Graph): void {
     train.waitTime -= dt;
     if (train.waitTime > 0) return;
 
+    // 次のエッジ（閉塞区間）を探す
     const targetEdge = this.findEdgeToNextStop(train, graph);
     if (targetEdge === undefined) {
       train.waitTime = RETRY_WAIT;
       return;
     }
 
-    if (!this.tryReserveEdge(targetEdge.id, train.id)) {
-      train.waitTime = RETRY_WAIT;
-      return;
-    }
-
-    // 目的地ノードが受け入れ可能か確認する
+    // 出発を試みる（エッジ予約 + ノード解放 + 到着先チェック）
     const destNodeId = targetEdge.fromId === train.nodeId ? targetEdge.toId : targetEdge.fromId;
-    if (!this.canEnterNode(destNodeId, targetEdge.id, graph)) {
-      // 目的地が満杯 - 予約を解放して待機する
-      this.edgeReservation.delete(targetEdge.id);
+    if (!this.blocks.tryDepart(train.id, train.nodeId, targetEdge.id, destNodeId, graph)) {
       train.waitTime = RETRY_WAIT;
       return;
     }
-
-    // 出発
-    this.removeFromNode(train.nodeId, train.id);
     train.state = TrainState.OnEdge;
     train.edgeId = targetEdge.id;
 
@@ -271,61 +288,31 @@ export class Simulation {
     }
   }
 
+  /**
+   * 閉塞区間の端に到着した列車の処理。
+   * ノード = 閉塞境界。容量があればノードに入り、エッジ（閉塞区間）を解放する。
+   * 容量がなければエッジ上で停止して待つ。
+   */
+  /**
+   * 閉塞区間の端に到着。ノードに入れれば入り、入れなければエッジ上で停止。
+   */
   private arrive(train: Train, edge: GraphEdge, nodeId: number, graph: Graph): void {
-    const node = graph.getNode(nodeId);
-    if (node === undefined) return;
-
-    const isRouteStop = this.routes.get(train.routeId)?.stops.includes(nodeId) === true;
-
-    // 通過：路線の停車駅でなければ、即座に走行を継続しようとする
-    if (!isRouteStop) {
-      const nextEdge = this.findEdgeToNextStop(train, graph, nodeId);
-      if (nextEdge !== undefined && this.tryReserveEdge(nextEdge.id, train.id)) {
-        this.edgeReservation.delete(edge.id);
-        train.edgeId = nextEdge.id;
-        if (nextEdge.fromId === nodeId) {
-          train.forward = true;
-          train.pathIndex = 0;
-        } else {
-          train.forward = false;
-          train.pathIndex = nextEdge.path.length - 1;
-        }
-        train.progress = 0;
-        return;
-      }
-    }
-
-    // ノードがこの列車を受け入れ可能か確認する（容量＋方向配置）
-    if (!this.canEnterNode(nodeId, edge.id, graph)) {
+    if (!this.blocks.tryArrive(train.id, edge.id, nodeId, graph)) {
       train.progress = 0;
       return;
     }
 
-    // 容量1のノードの場合、次のエッジの空き状況も確認する
-    if (node.capacity <= 1) {
-      const nextEdge = this.findEdgeToNextStop(train, graph, nodeId);
-      if (nextEdge !== undefined) {
-        const holder = this.edgeReservation.get(nextEdge.id);
-        if (holder !== undefined && holder !== train.id) {
-          train.progress = 0;
-          return;
-        }
-      }
-    }
-
-    // ノードに入って停止する
-    this.edgeReservation.delete(edge.id);
-    this.addToNode(nodeId, train.id, edge.id);
     train.state = TrainState.AtNode;
     train.nodeId = nodeId;
-    train.waitTime = isRouteStop ? STATION_WAIT : RETRY_WAIT;
+
+    // 路線の停車駅なら停車、そうでなければ即出発試行
+    const isRouteStop = this.routes.get(train.routeId)?.stops.includes(nodeId) === true;
+    train.waitTime = isRouteStop ? STATION_WAIT : 0;
 
     if (isRouteStop) {
       this.onTrainArrive?.(train, nodeId);
+      this.advanceRouteIfAtStop(train);
     }
-
-    // 目的の停車駅であれば路線を進める
-    this.advanceRouteIfAtStop(train);
   }
 
   // --- 路線ロジック ---
@@ -372,100 +359,55 @@ export class Simulation {
     const currentNode = fromNodeId ?? train.nodeId;
     const targetNodeId = route.stops[train.routeStopIndex];
     if (targetNodeId === undefined) return undefined;
+    if (currentNode === targetNodeId) return undefined;
 
-    // currentNodeからtargetNodeIdに向かうエッジを見つける
-    const edges = graph.getEdgesFor(currentNode);
-
-    // 直接接続
-    for (const edge of edges) {
-      const otherNode = edge.fromId === currentNode ? edge.toId : edge.fromId;
-      if (otherNode === targetNodeId) return edge;
-    }
-
-    // 直接接続なし - 目的地に近い隣接ノードへ向かうエッジを選択する
-    // 現時点では、来た方向以外の接続エッジを選択する
-    // （単純なヒューリスティック：BFSの方が良いが、線形グラフには十分）
-    const targetNode = graph.getNode(targetNodeId);
-    if (targetNode === undefined) return undefined;
-
-    let bestEdge: GraphEdge | undefined;
-    let bestDist = Infinity;
-
-    for (const edge of edges) {
-      const otherNodeId = edge.fromId === currentNode ? edge.toId : edge.fromId;
-      const otherNode = graph.getNode(otherNodeId);
-      if (otherNode === undefined) continue;
-
-      const dx = otherNode.tileX - targetNode.tileX;
-      const dy = otherNode.tileY - targetNode.tileY;
-      const dist = dx * dx + dy * dy;
-      if (dist < bestDist) {
-        bestDist = dist;
-        bestEdge = edge;
-      }
-    }
-
-    return bestEdge;
+    // BFSでtargetNodeIdへの最短経路の最初のエッジを見つける
+    return this.bfsFirstEdge(currentNode, targetNodeId, graph);
   }
-
-  // --- 予約 ---
-
-  private tryReserveEdge(edgeId: number, trainId: number): boolean {
-    const holder = this.edgeReservation.get(edgeId);
-    if (holder !== undefined && holder !== trainId) return false;
-    this.edgeReservation.set(edgeId, trainId);
-    return true;
-  }
-
-  // --- ノード占有 ---
-
-  private addToNode(nodeId: number, trainId: number, fromEdgeId: number): void {
-    let map = this.nodeOccupants.get(nodeId);
-    if (map === undefined) {
-      map = new Map();
-      this.nodeOccupants.set(nodeId, map);
-    }
-    map.set(trainId, fromEdgeId);
-  }
-
-  private removeFromNode(nodeId: number, trainId: number): void {
-    this.nodeOccupants.get(nodeId)?.delete(trainId);
-  }
-
 
   /**
-   * 信号配置を考慮して、指定されたエッジから到着する列車を
-   * ノードが受け入れ可能か確認する。
+   * BFSでstartからgoalへの経路を探索し、startから出発する最初のエッジを返す。
+   * 到達不可能ならundefinedを返す。
    */
-  private canEnterNode(
-    nodeId: number,
-    fromEdgeId: number,
+  private bfsFirstEdge(
+    start: number,
+    goal: number,
     graph: Graph,
-  ): boolean {
-    const node = graph.getNode(nodeId);
-    if (node === undefined) return false;
+  ): GraphEdge | undefined {
+    // cameFrom: nodeId -> { fromNodeId, viaEdge }
+    const cameFrom = new Map<number, { from: number; edge: GraphEdge }>();
+    const queue: number[] = [start];
+    const visited = new Set<number>([start]);
 
-    const occupants = this.nodeOccupants.get(nodeId);
-    if (occupants === undefined || occupants.size === 0) return true;
-    if (occupants.size >= node.capacity) return false;
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (current === undefined) break;
 
-    // 信号場以外のノードは総容量のみ確認する
-    if (node.kind !== NodeKind.SignalStation) return true;
+      for (const edge of graph.getEdgesFor(current)) {
+        const neighbor = edge.fromId === current ? edge.toId : edge.fromId;
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
+        cameFrom.set(neighbor, { from: current, edge });
 
-    if (node.signalLayout === SignalLayout.Passing) {
-      // 方向ごとに1線路：任意のエッジからの列車は最大1台
-      for (const arrivedFrom of occupants.values()) {
-        if (arrivedFrom === fromEdgeId) return false;
+        if (neighbor === goal) {
+          // 経路を逆にたどってstartの次のエッジを返す
+          let node = goal;
+          for (let step = 0; step < cameFrom.size; step++) {
+            const prev = cameFrom.get(node);
+            if (prev === undefined) return undefined;
+            if (prev.from === start) return prev.edge;
+            node = prev.from;
+          }
+          return undefined;
+        }
+
+        queue.push(neighbor);
       }
-      return true;
     }
 
-    // 追い越し：全占有列車が同じ方向からでなければならない
-    for (const arrivedFrom of occupants.values()) {
-      if (arrivedFrom !== fromEdgeId) return false;
-    }
-    return true;
+    return undefined;
   }
+
 
   // --- 位置 ---
 

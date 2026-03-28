@@ -1,9 +1,45 @@
+import { useState } from "react";
 import type { Game, RouteInfo } from "../game.js";
 
 interface RouteListProps {
   readonly routes: readonly RouteInfo[];
   readonly lastRouteId: number | null;
   readonly game: Game;
+}
+
+function EditableName({ value, onSave }: { value: string; onSave: (v: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+
+  if (!editing) {
+    return (
+      <span className="editable-name-wrap">
+        <span className="editable-name-text">{value}</span>
+        <button
+          className="edit-btn"
+          onClick={(e) => { e.stopPropagation(); setEditing(true); setDraft(value); }}
+          title="Rename"
+        >
+          ✎
+        </button>
+      </span>
+    );
+  }
+
+  return (
+    <input
+      className="name-edit-input"
+      value={draft}
+      autoFocus
+      onClick={(e) => { e.stopPropagation(); }}
+      onChange={(e) => { setDraft(e.target.value); }}
+      onBlur={() => { onSave(draft); setEditing(false); }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") { onSave(draft); setEditing(false); }
+        if (e.key === "Escape") { setEditing(false); }
+      }}
+    />
+  );
 }
 
 export function RouteList({ routes, lastRouteId, game }: RouteListProps) {
@@ -21,11 +57,21 @@ export function RouteList({ routes, lastRouteId, game }: RouteListProps) {
           onClick={() => { game.selectRoute(r.id); }}
         >
           <div className="route-item-header">
-            <span className="route-name">Route #{r.id}</span>
+            <EditableName
+              value={r.name}
+              onSave={(v) => { game.renameRoute(r.id, v); }}
+            />
             <span className="route-mode">{r.mode}</span>
           </div>
+          <div className="route-stops-display">
+            {r.stops.map((stopId, i) => (
+              <span key={`${String(stopId)}-${String(i)}`}>
+                {i > 0 && <span className="stop-arrow"> → </span>}
+                <span className="stop-badge">#{stopId}</span>
+              </span>
+            ))}
+          </div>
           <div className="route-item-detail">
-            <span>Stops: {r.stops.length}</span>
             <span>Trains: {r.trainCount}</span>
             <button
               className="small-btn"
@@ -39,6 +85,12 @@ export function RouteList({ routes, lastRouteId, game }: RouteListProps) {
               onClick={(e) => { e.stopPropagation(); game.removeTrainFromRoute(r.id); }}
             >
               -
+            </button>
+            <button
+              className="small-btn"
+              onClick={(e) => { e.stopPropagation(); game.editRoute(r.id); }}
+            >
+              Edit
             </button>
             <button
               className="small-btn danger-btn"

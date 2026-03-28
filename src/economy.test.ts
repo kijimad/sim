@@ -44,7 +44,8 @@ describe("Economy", () => {
     // without consuming buildings. Add one manually isn't possible via public API.
     // Test the flow: carrying cargo with no consumers earns 0
     const carrying = new Map<number, number>([[Resource.Rice, 10]]);
-    const { earned } = economy.trainArrive(station.id, carrying, graph);
+    const allDemanded = new Set([Resource.Rice, Resource.Iron, Resource.Goods, Resource.Passengers]);
+    const { earned } = economy.trainArrive(station.id, carrying, graph, allDemanded);
 
     // No buildings to consume, so no earnings
     expect(earned).toBe(0);
@@ -65,7 +66,8 @@ describe("Economy", () => {
 
     const totalBefore = economy.getTotalWaiting(station.id);
     if (totalBefore > 0) {
-      const { newCargo } = economy.trainArrive(station.id, new Map(), graph);
+      const allDemanded = new Set([Resource.Rice, Resource.Iron, Resource.Goods, Resource.Passengers]);
+      const { newCargo } = economy.trainArrive(station.id, new Map(), graph, allDemanded);
       let cargoTotal = 0;
       for (const amount of newCargo.values()) {
         cargoTotal += amount;

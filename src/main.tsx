@@ -1,6 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { Game } from "./game.js";
+import { Game, parseConfigFromURL } from "./game.js";
 import { GameUI } from "./ui/GameUI.js";
 import "./ui/style.css";
 
@@ -18,7 +18,8 @@ function getCanvas(): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D
 
 function main(): void {
   const { canvas, ctx } = getCanvas();
-  const game = new Game(canvas, ctx);
+  const config = parseConfigFromURL();
+  const game = new Game(canvas, ctx, config);
 
   window.addEventListener("resize", () => { game.resize(); });
 

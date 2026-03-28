@@ -102,6 +102,23 @@
   border-radius: 3px;
   padding: 2px 6px;
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.stop-remove {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+}
+
+.stop-remove:hover {
+  color: #ff6060;
 }
 
 .route-actions {
@@ -181,6 +198,17 @@
 .route-mode {
   font-size: 11px;
   color: #aaa;
+}
+
+.route-stops-display {
+  font-size: 11px;
+  color: #aaa;
+  margin: 3px 0;
+  line-height: 1.6;
+}
+
+.stop-arrow {
+  color: #666;
 }
 
 .route-item-detail {
@@ -308,4 +336,107 @@
 
 .danger-btn:hover {
   background: rgba(220, 60, 60, 0.6);
+}
+
+/* Train list */
+.train-list {
+  background: rgba(0, 0, 0, 0.75);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.train-item {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+
+.train-item-header {
+  display: flex;
+  justify-content: space-between;
+}
+
+.train-state {
+  color: #aaa;
+  font-size: 11px;
+}
+
+.train-item-detail {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: #bbb;
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.train-cargo {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.cargo-tag {
+  background: rgba(208, 128, 32, 0.3);
+  border: 1px solid rgba(208, 128, 32, 0.5);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+.train-empty {
+  color: #666;
+  font-style: italic;
+}
+
+.editable-name-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.editable-name-text {
+  font-weight: bold;
+}
+
+.edit-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.3);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.edit-btn:hover {
+  color: rgba(100, 160, 255, 0.8);
+}
+
+.name-edit-input {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(100, 160, 255, 0.5);
+  border-radius: 3px;
+  color: #fff;
+  font-size: 12px;
+  padding: 1px 4px;
+  width: 100px;
+  outline: none;
+  pointer-events: auto;
+}
+
+.debug-tag {
+  background: rgba(220, 40, 220, 0.3);
+  border: 1px solid rgba(220, 40, 220, 0.5);
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 11px;
 }

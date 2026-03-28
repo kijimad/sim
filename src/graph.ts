@@ -42,7 +42,7 @@ export interface GraphNode {
   readonly kind: NodeKind;
   readonly tileX: number;
   readonly tileY: number;
-  readonly name: string;
+  name: string;
   readonly capacity: number;
   readonly signalLayout: SignalLayout;
 }
