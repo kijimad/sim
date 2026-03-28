@@ -197,11 +197,80 @@ export class Renderer {
       const cy = pos.worldY * TILE_SIZE + TILE_SIZE / 2;
       const size = TILE_SIZE * 0.4;
 
-      ctx.fillStyle = "#2050d0";
+      // Train color: blue if empty, orange if carrying cargo
+      ctx.fillStyle = pos.cargoTotal > 0 ? "#d08020" : "#2050d0";
       ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1.5;
       ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
+
+      // Cargo amount label
+      if (pos.cargoTotal > 0) {
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${String(TILE_SIZE * 0.22)}px sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(Math.floor(pos.cargoTotal)), cx, cy);
+      }
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  renderCities(
+    cities: readonly { tileX: number; tileY: number; name: string; radius?: number }[],
+    camera: Camera,
+  ): void {
+    const { ctx, canvas } = this;
+    camera.applyTransform(ctx, canvas);
+
+    for (const city of cities) {
+      const cx = city.tileX * TILE_SIZE + TILE_SIZE / 2;
+      const cy = city.tileY * TILE_SIZE + TILE_SIZE / 2;
+
+      // City area
+      if (city.radius !== undefined) {
+        const r = city.radius * TILE_SIZE;
+        ctx.fillStyle = "rgba(200, 160, 60, 0.08)";
+        ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+        ctx.strokeStyle = "rgba(200, 160, 60, 0.4)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(cx - r, cy - r, r * 2, r * 2);
+        ctx.setLineDash([]);
+      }
+
+      // Name label
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(city.name, cx, cy + TILE_SIZE * 0.5 + 2);
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  renderBuildings(
+    buildings: readonly { tileX: number; tileY: number; type: number }[],
+    camera: Camera,
+  ): void {
+    const { ctx, canvas } = this;
+    camera.applyTransform(ctx, canvas);
+
+    const BUILDING_COLORS: Record<number, string> = {
+      0: "#c08040", // Residence - brown
+      1: "#4080c0", // Commercial - blue
+      2: "#60a030", // Farm - green
+      3: "#808080", // Mine - grey
+      4: "#a04040", // Factory - red
+    };
+
+    for (const b of buildings) {
+      const x = b.tileX * TILE_SIZE;
+      const y = b.tileY * TILE_SIZE;
+      ctx.fillStyle = BUILDING_COLORS[b.type] ?? "#888888";
+      ctx.fillRect(x + 2, y + 2, TILE_SIZE - 4, TILE_SIZE - 4);
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);

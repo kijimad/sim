@@ -45,16 +45,18 @@ export interface Train {
 
   // Route
   routeId: number;
-  /** Current index in route.stops (the stop we're heading toward) */
   routeStopIndex: number;
-  /** Direction through route stops: +1 forward, -1 backward (shuttle mode) */
   routeDirection: 1 | -1;
+
+  // Cargo
+  cargo: Map<number, number>;
 }
 
 export interface TrainPosition {
   readonly trainId: number;
   readonly worldX: number;
   readonly worldY: number;
+  readonly cargoTotal: number;
 }
 
 // --- Constants ---
@@ -118,8 +120,9 @@ export class Simulation {
       speed: DEFAULT_SPEED,
       waitTime: STATION_WAIT,
       routeId,
-      routeStopIndex: 1, // heading toward second stop
+      routeStopIndex: 1,
       routeDirection: 1,
+      cargo: new Map(),
     };
     this.trains.set(id, train);
     this.addToNode(startNodeId, id);
@@ -150,6 +153,9 @@ export class Simulation {
   }
 
   // --- Update ---
+
+  /** Callback invoked when a train arrives at a node */
+  onTrainArrive: ((train: Train, nodeId: number) => void) | null = null;
 
   update(dt: number, graph: Graph): void {
     for (const train of this.trains.values()) {
@@ -272,6 +278,12 @@ export class Simulation {
     train.nodeId = nodeId;
     train.waitTime = STATION_WAIT;
 
+    // Only load/unload at route stops
+    const route = this.routes.get(train.routeId);
+    if (route?.stops.includes(nodeId) === true) {
+      this.onTrainArrive?.(train, nodeId);
+    }
+
     // Advance route if this is the target stop
     this.advanceRouteIfAtStop(train);
   }
@@ -386,11 +398,21 @@ export class Simulation {
 
   // --- Position ---
 
+  private static sumCargo(cargo: Map<number, number>): number {
+    let total = 0;
+    for (const v of cargo.values()) {
+      total += v;
+    }
+    return total;
+  }
+
   private getPosition(train: Train, graph: Graph): TrainPosition | null {
+    const cargoTotal = Simulation.sumCargo(train.cargo);
+
     if (train.state === TrainState.AtNode) {
       const node = graph.getNode(train.nodeId);
       if (node === undefined) return null;
-      return { trainId: train.id, worldX: node.tileX, worldY: node.tileY };
+      return { trainId: train.id, worldX: node.tileX, worldY: node.tileY, cargoTotal };
     }
 
     const edge = graph.getEdge(train.edgeId);
@@ -413,6 +435,7 @@ export class Simulation {
       trainId: train.id,
       worldX: current.x + (next.x - current.x) * train.progress,
       worldY: current.y + (next.y - current.y) * train.progress,
+      cargoTotal,
     };
   }
 }

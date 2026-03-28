@@ -1,5 +1,6 @@
 import type { RouteMode } from "./simulation.js";
 import { Camera } from "./camera.js";
+import { Economy, generateCities } from "./economy.js";
 import { Graph, NodeKind } from "./graph.js";
 import { InputHandler } from "./input.js";
 import { findPath } from "./pathfinding.js";
@@ -26,6 +27,8 @@ export interface GameSnapshot {
   readonly lastRouteId: number | null;
   readonly trainCount: number;
   readonly routeCount: number;
+  readonly money: number;
+  readonly cityCount: number;
 }
 
 export type GameEventListener = () => void;
@@ -35,6 +38,7 @@ export class Game {
   private readonly canvas: HTMLCanvasElement;
   private readonly graph: Graph;
   private readonly sim: Simulation;
+  private readonly economy: Economy;
   private readonly map: TileMap;
   private readonly camera: Camera;
 
@@ -58,6 +62,16 @@ export class Game {
 
     this.graph = new Graph();
     this.sim = new Simulation();
+    this.economy = new Economy();
+
+    const seed = Date.now();
+    generateCities(this.map, this.economy, 8, seed);
+
+    // Wire up train arrival to economy
+    this.sim.onTrainArrive = (train, nodeId): void => {
+      const { newCargo } = this.economy.trainArrive(nodeId, train.cargo, this.graph);
+      train.cargo = newCargo;
+    };
 
     const centerWorld = (MAP_SIZE * TILE_SIZE) / 2;
     this.camera = new Camera(centerWorld, centerWorld);
@@ -93,6 +107,8 @@ export class Game {
       lastRouteId: this.lastRouteId,
       trainCount: this.sim.trainCount,
       routeCount: this.sim.getAllRoutes().length,
+      money: this.economy.money,
+      cityCount: this.economy.getAllCities().length,
     };
     return this.cachedSnapshot;
   }
@@ -107,8 +123,10 @@ export class Game {
       this.lastTime = now;
 
       this.sim.update(dt, this.graph);
+      this.economy.update(dt, this.graph, this.map);
 
       this.renderer.render(this.map, this.camera);
+      this.renderCities();
       this.renderer.renderGraph(
         this.graph,
         this.camera,
@@ -123,6 +141,17 @@ export class Game {
       this.animFrameId = requestAnimationFrame(loop);
     };
     this.animFrameId = requestAnimationFrame(loop);
+  }
+
+  private renderCities(): void {
+    this.renderer.renderBuildings(this.economy.getAllBuildings(), this.camera);
+    const cities = this.economy.getAllCities().map((c) => ({
+      tileX: c.centerX,
+      tileY: c.centerY,
+      name: c.name,
+      radius: c.radius,
+    }));
+    this.renderer.renderCities(cities, this.camera);
   }
 
   stop(): void {
@@ -231,7 +260,8 @@ export class Game {
     } else {
       if (this.map.get(tileX, tileY).terrain === Terrain.Water) return;
 
-      if (this.toolMode === ToolMode.SignalStation && this.selectedNodeId === null) {
+      // If no node selected and clicking near an existing edge, split it
+      if (this.selectedNodeId === null) {
         if (this.trySplitEdge(tileX, tileY)) return;
       }
 
@@ -273,12 +303,8 @@ export class Game {
     const pathPoint = closest.edge.path[closest.pathIndex];
     if (pathPoint === undefined) return false;
 
-    const node = this.graph.addNode(
-      NodeKind.SignalStation,
-      pathPoint.x,
-      pathPoint.y,
-      "S",
-    );
+    const { kind, name } = this.makeNodeInfo();
+    const node = this.graph.addNode(kind, pathPoint.x, pathPoint.y, name);
     this.graph.splitEdge(closest.edge.id, node, closest.pathIndex);
     this.notify();
     return true;
