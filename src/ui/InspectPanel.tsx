@@ -62,6 +62,25 @@ function EdgeInfo({ info, game }: { info: InspectInfo; game: Game }) {
         <span className="inspect-label">Length</span>
         <span>{info.edgeLength} tiles</span>
       </div>
+      <div className="inspect-row">
+        <span className="inspect-label">Tracks</span>
+        <span className="capacity-control">
+          <button
+            className="cap-btn"
+            disabled={(info.edgeCapacity ?? 1) <= 1}
+            onClick={() => { game.setEdgeCapacity(edgeId, (info.edgeCapacity ?? 1) - 1); }}
+          >
+            -
+          </button>
+          <span>{info.edgeCapacity ?? 1}</span>
+          <button
+            className="cap-btn"
+            onClick={() => { game.setEdgeCapacity(edgeId, (info.edgeCapacity ?? 1) + 1); }}
+          >
+            +
+          </button>
+        </span>
+      </div>
       <button
         className="danger-btn"
         onClick={() => { game.removeEdge(edgeId); }}
@@ -137,8 +156,23 @@ export function InspectPanel({ info, game }: InspectPanelProps) {
               <EditableName value={info.nodeName ?? ""} onSave={(v) => { game.renameNode(info.nodeId ?? 0, v); }} />
             </div>
             <div className="inspect-row">
-              <span className="inspect-label">Trains</span>
-              <span>{info.nodeTrains} / {info.nodeCapacity}</span>
+              <span className="inspect-label">Capacity</span>
+              <span className="capacity-control">
+                <button
+                  className="cap-btn"
+                  disabled={(info.nodeCapacity ?? 1) <= 1}
+                  onClick={() => { game.setNodeCapacity(info.nodeId ?? 0, (info.nodeCapacity ?? 1) - 1); }}
+                >
+                  -
+                </button>
+                <span>{info.nodeTrains} / {info.nodeCapacity}</span>
+                <button
+                  className="cap-btn"
+                  onClick={() => { game.setNodeCapacity(info.nodeId ?? 0, (info.nodeCapacity ?? 1) + 1); }}
+                >
+                  +
+                </button>
+              </span>
             </div>
             {info.nodeLayout !== undefined && (
               <div className="inspect-row">

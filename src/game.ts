@@ -68,7 +68,7 @@ export interface InspectInfo {
   readonly edgeFrom?: string;
   readonly edgeTo?: string;
   readonly edgeLength?: number;
-  readonly edgeReservedBy?: number;
+  readonly edgeCapacity?: number;
   readonly nodeId?: number;
   readonly nodeName?: string;
   readonly nodeKind?: string;
@@ -316,6 +316,7 @@ export class Game {
         edgeFrom: fromNode?.name ?? String(closest.edge.fromId),
         edgeTo: toNode?.name ?? String(closest.edge.toId),
         edgeLength: closest.edge.path.length,
+        edgeCapacity: this.sim.blocks.getEdgeCapacity(closest.edge.id),
       };
     }
 
@@ -334,6 +335,16 @@ export class Game {
       this.sim.update(dt, this.graph);
       this.economy.update(dt, this.graph, this.map);
 
+      if (this.config.debug) {
+        try {
+          this.sim.blocks.checkInvariants(this.graph);
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error("INVARIANT VIOLATION:", err);
+        }
+        this.detectDeadlock();
+      }
+
       this.renderer.render(this.map, this.camera);
       this.renderCities();
       this.renderer.renderGraph(
@@ -344,6 +355,7 @@ export class Game {
           trainCount: this.sim.getNodeTrainCount(nodeId),
           waitingCargo: this.economy.getTotalWaiting(nodeId),
         }),
+        (edgeId) => this.sim.blocks.getEdgeCapacity(edgeId),
       );
       this.renderer.renderTrains(
         this.sim.getTrainPositions(this.graph),
@@ -381,8 +393,8 @@ export class Game {
     this.sim.addTrain(route1.id, this.graph);
     this.sim.addTrain(route1.id, this.graph);
 
-    // A-C間のShuttle路線 + 列車1台
-    const route2 = this.sim.addRoute([a.id, c.id], RouteMode.Shuttle, "A-C Line");
+    // C-A間のShuttle路線 + 列車1台（Cからスポーン）
+    const route2 = this.sim.addRoute([c.id, a.id], RouteMode.Shuttle, "C-A Line");
     this.sim.addTrain(route2.id, this.graph);
 
     this.lastRouteId = route1.id;
@@ -392,6 +404,37 @@ export class Game {
     this.camera.y = b.tileY * TILE_SIZE;
   }
 
+
+  private deadlockCounter = 0;
+  private detectDeadlock(): void {
+    const trains = this.sim.getAllTrains();
+    if (trains.length === 0) return;
+    const allAtNode = trains.every((t) => t.state === TrainState.AtNode);
+    if (allAtNode) {
+      this.deadlockCounter++;
+      if (this.deadlockCounter > 60) {
+        // eslint-disable-next-line no-console
+        console.warn("DEADLOCK DETECTED:");
+        for (const t of trains) {
+          const route = this.sim.getRoute(t.routeId);
+          const target = route?.stops[t.routeStopIndex];
+          const nextEdge = this.graph.getEdgesFor(t.nodeId);
+          // eslint-disable-next-line no-console
+          console.warn(
+            `  Train${String(t.id)}: node=${String(t.nodeId)} target=${String(target ?? "?")} ` +
+            `edges=[${nextEdge.map((e) => `${String(e.id)}(free=${String(this.sim.blocks.isEdgeFree(e.id))})`).join(",")}] ` +
+            `canEnter=${nextEdge.map((e) => {
+              const dest = e.fromId === t.nodeId ? e.toId : e.fromId;
+              return `${String(dest)}(${String(this.sim.blocks.canEnterNode(dest, e.id, this.graph))})`;
+            }).join(",")}`
+          );
+        }
+        this.deadlockCounter = 0;
+      }
+    } else {
+      this.deadlockCounter = 0;
+    }
+  }
 
   private renderCities(): void {
     this.renderer.renderBuildings(this.economy.getAllBuildings(), this.camera);
@@ -495,8 +538,20 @@ export class Game {
     this.notify();
   }
 
+  setEdgeCapacity(edgeId: number, capacity: number): void {
+    this.sim.blocks.setEdgeCapacity(edgeId, Math.max(1, capacity));
+    this.notify();
+  }
+
   removeEdge(edgeId: number): void {
     this.graph.removeEdge(edgeId);
+    this.notify();
+  }
+
+  setNodeCapacity(nodeId: number, capacity: number): void {
+    const node = this.graph.getNode(nodeId);
+    if (node === undefined) return;
+    node.capacity = Math.max(1, capacity);
     this.notify();
   }
 

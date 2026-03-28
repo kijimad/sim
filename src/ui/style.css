@@ -433,6 +433,35 @@
   pointer-events: auto;
 }
 
+.capacity-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cap-btn {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  color: #fff;
+  cursor: pointer;
+  font-size: 12px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  line-height: 1;
+  pointer-events: auto;
+}
+
+.cap-btn:hover:not(:disabled) {
+  background: rgba(60, 120, 220, 0.5);
+}
+
+.cap-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .debug-tag {
   background: rgba(220, 40, 220, 0.3);
   border: 1px solid rgba(220, 40, 220, 0.5);

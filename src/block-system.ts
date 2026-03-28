@@ -1,6 +1,9 @@
 import type { Graph } from "./graph.js";
 import { NodeKind, SignalLayout } from "./graph.js";
 
+/** スポーン時など方向が未定義の場合の値 */
+export const NO_DIRECTION = -1;
+
 /**
  * 閉塞システム: エッジ（閉塞区間）の予約とノード（閉塞境界）の占有を管理する。
  *
@@ -43,23 +46,28 @@ export class BlockSystem {
     if (node === undefined) return false;
 
     const occupants = this.nodeOccupants.get(nodeId);
-    if (occupants === undefined || occupants.size === 0) return true;
-    if (occupants.size >= node.capacity) return false;
+    const totalOccupancy = occupants?.size ?? 0;
+    if (totalOccupancy === 0) return true;
+    if (totalOccupancy >= node.capacity) return false;
 
-    // 信号場以外のノードは総容量のみ確認する
-    if (node.kind !== NodeKind.SignalStation) return true;
+    // 容量1: 総容量のみ確認（上のチェックで済み）
+    if (node.capacity <= 1) return true;
 
-    if (node.signalLayout === SignalLayout.Passing) {
-      // 方向ごとに1線路: 同じエッジから来た列車は1台まで
-      for (const arrivedFrom of occupants.values()) {
-        if (arrivedFrom === fromEdgeId) return false;
+    // 容量2以上: 方向別閉塞
+    // ここに到達するのは totalOccupancy < capacity の場合のみ。
+    // 容量チェックだけで十分安全。方向制約は信号場のみ適用。
+    if (occupants !== undefined && node.kind === NodeKind.SignalStation) {
+      if (node.signalLayout === SignalLayout.Overtaking) {
+        for (const arrivedFrom of occupants.values()) {
+          if (arrivedFrom !== fromEdgeId && arrivedFrom !== NO_DIRECTION) return false;
+        }
+        return true;
       }
-      return true;
-    }
 
-    // 追い越し: 全占有列車が同じ方向からでなければならない
-    for (const arrivedFrom of occupants.values()) {
-      if (arrivedFrom !== fromEdgeId) return false;
+      // Passing: 方向ごとに1台
+      for (const arrivedFrom of occupants.values()) {
+        if (arrivedFrom === fromEdgeId && fromEdgeId !== NO_DIRECTION) return false;
+      }
     }
     return true;
   }
@@ -72,46 +80,56 @@ export class BlockSystem {
 
   /**
    * 列車がノードからエッジへ出発する。
-   * エッジ予約 + ノード解放をアトミックに行う。
+   * 出発元ノードから離れ、到着先ノードにスロットを予約し、エッジに乗る。
    * 失敗した場合は何も変更しない。
    */
   tryDepart(trainId: number, nodeId: number, edgeId: number, destNodeId: number, graph: Graph): boolean {
-    // エッジが空いているか
     if (!this.isEdgeFree(edgeId, trainId)) return false;
-    // 到着先ノードに入れるか
     if (!this.canEnterNode(destNodeId, edgeId, graph)) return false;
 
-    // アトミックに実行
-    this.addToEdge(edgeId, trainId);
+    // アトミックに実行: 出発元解放 + エッジ占有 + 到着先スロット予約
     this.removeFromNode(nodeId, trainId);
+    this.addToEdge(edgeId, trainId);
+    this.addToNode(destNodeId, trainId, edgeId);
     return true;
   }
 
   /**
    * 列車がエッジからノードへ到着する。
-   * ノード入場 + エッジ解放をアトミックに行う。
-   * 失敗した場合は何も変更しない。
+   * tryDepartで既にノードにスロット予約済みなので、エッジ解放のみ行う。
+   * スロット予約がなければ通常のcanEnterNodeチェックを行う。
    */
   tryArrive(trainId: number, edgeId: number, nodeId: number, graph: Graph): boolean {
-    if (!this.canEnterNode(nodeId, edgeId, graph)) return false;
+    // tryDepartで既に予約済みか確認
+    const occupants = this.nodeOccupants.get(nodeId);
+    const alreadyReserved = occupants?.has(trainId) === true;
 
-    // アトミックに実行
-    this.addToNode(nodeId, trainId, edgeId);
+    if (!alreadyReserved) {
+      // 予約なし（異常ケースだが安全策）
+      if (!this.canEnterNode(nodeId, edgeId, graph)) return false;
+      this.addToNode(nodeId, trainId, edgeId);
+    }
+
     this.removeFromEdge(edgeId, trainId);
     return true;
   }
 
   /** スポーン時にノードに配置する */
   placeAtNode(nodeId: number, trainId: number): void {
-    this.addToNode(nodeId, trainId, -1);
+    this.addToNode(nodeId, trainId, NO_DIRECTION);
   }
 
-  /** 列車を完全に削除する */
-  removeTrain(trainId: number, state: number, nodeId: number, edgeId: number): void {
-    if (state === 0) { // AtNode
+  /** 列車を完全に削除する。OnEdge状態ではエッジと到着先ノード両方を解放する */
+  removeTrain(trainId: number, isAtNode: boolean, nodeId: number, edgeId: number): void {
+    if (isAtNode) {
       this.removeFromNode(nodeId, trainId);
     } else {
       this.removeFromEdge(edgeId, trainId);
+      // OnEdge時は到着先ノードにもoccupantsとして入っている
+      // 全ノードから削除する（どのノードに予約されているかわからないため）
+      for (const [, occupants] of this.nodeOccupants) {
+        occupants.delete(trainId);
+      }
     }
   }
 

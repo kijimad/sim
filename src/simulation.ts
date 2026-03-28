@@ -64,6 +64,11 @@ export interface TrainPosition {
   readonly worldX: number;
   readonly worldY: number;
   readonly cargoTotal: number;
+  /** 進行方向の単位ベクトル（描画オフセット用） */
+  readonly dirX: number;
+  readonly dirY: number;
+  /** このエッジの容量（複線判定用） */
+  readonly edgeCapacity: number;
 }
 
 // --- 定数 ---
@@ -139,6 +144,9 @@ export class Simulation {
     const node = graph.getNode(startNodeId);
     if (node === undefined) return;
 
+    // スポーン先のノード容量を確認する
+    if (this.blocks.getNodeTrainCount(startNodeId) >= node.capacity) return;
+
     const id = this.nextId++;
     const train: Train = {
       id,
@@ -163,7 +171,7 @@ export class Simulation {
     const train = this.trains.get(id);
     if (train === undefined) return false;
 
-    this.blocks.removeTrain(id, train.state, train.nodeId, train.edgeId);
+    this.blocks.removeTrain(id, train.state === TrainState.AtNode, train.nodeId, train.edgeId);
     return this.trains.delete(id);
   }
 
@@ -209,9 +217,21 @@ export class Simulation {
   }
 
   getTrainPositions(graph: Graph): TrainPosition[] {
+    // ノードごとの列車インデックスを事前計算（O(trains)）
+    const nodeIndices = new Map<number, { count: number; nextIdx: number }>();
+    for (const train of this.trains.values()) {
+      if (train.state !== TrainState.AtNode) continue;
+      const entry = nodeIndices.get(train.nodeId);
+      if (entry !== undefined) {
+        entry.count++;
+      } else {
+        nodeIndices.set(train.nodeId, { count: 1, nextIdx: 0 });
+      }
+    }
+
     const result: TrainPosition[] = [];
     for (const train of this.trains.values()) {
-      const pos = this.getPosition(train, graph);
+      const pos = this.getPosition(train, graph, nodeIndices);
       if (pos !== null) {
         result.push(pos);
       }
@@ -288,11 +308,6 @@ export class Simulation {
     }
   }
 
-  /**
-   * 閉塞区間の端に到着した列車の処理。
-   * ノード = 閉塞境界。容量があればノードに入り、エッジ（閉塞区間）を解放する。
-   * 容量がなければエッジ上で停止して待つ。
-   */
   /**
    * 閉塞区間の端に到着。ノードに入れれば入り、入れなければエッジ上で停止。
    */
@@ -419,17 +434,28 @@ export class Simulation {
     return total;
   }
 
-  private getPosition(train: Train, graph: Graph): TrainPosition | null {
+  private getPosition(
+    train: Train,
+    graph: Graph,
+    nodeIndices: Map<number, { count: number; nextIdx: number }>,
+  ): TrainPosition | null {
     const cargoTotal = Simulation.sumCargo(train.cargo);
 
     if (train.state === TrainState.AtNode) {
       const node = graph.getNode(train.nodeId);
       if (node === undefined) return null;
-      return { trainId: train.id, worldX: node.tileX, worldY: node.tileY, cargoTotal };
+      let offsetX = 0;
+      const entry = nodeIndices.get(train.nodeId);
+      if (entry !== undefined && entry.count > 1) {
+        const idx = entry.nextIdx++;
+        offsetX = (idx - (entry.count - 1) / 2) * 0.4;
+      }
+      return { trainId: train.id, worldX: node.tileX + offsetX, worldY: node.tileY, cargoTotal, dirX: 0, dirY: 0, edgeCapacity: 1 };
     }
 
     const edge = graph.getEdge(train.edgeId);
     if (edge === undefined) return null;
+    const edgeCapacity = this.blocks.getEdgeCapacity(edge.id);
 
     const path = edge.path;
     const current = path[train.pathIndex];
@@ -444,11 +470,20 @@ export class Simulation {
     const next: PathNode | undefined = path[nextIdx];
     if (next === undefined) return null;
 
+    const dx = next.x - current.x;
+    const dy = next.y - current.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const dirX = len > 0 ? dx / len : 0;
+    const dirY = len > 0 ? dy / len : 0;
+
     return {
       trainId: train.id,
-      worldX: current.x + (next.x - current.x) * train.progress,
-      worldY: current.y + (next.y - current.y) * train.progress,
+      worldX: current.x + dx * train.progress,
+      worldY: current.y + dy * train.progress,
       cargoTotal,
+      dirX,
+      dirY,
+      edgeCapacity,
     };
   }
 }

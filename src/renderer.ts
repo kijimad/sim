@@ -85,6 +85,7 @@ export class Renderer {
     camera: Camera,
     selectedNodeId: number | null,
     nodeInfo?: (nodeId: number) => { trainCount: number; waitingCargo: number },
+    edgeCapacity?: (edgeId: number) => number,
   ): void {
     const { ctx, canvas } = this;
     camera.applyTransform(ctx, canvas);
@@ -92,7 +93,8 @@ export class Renderer {
     // エッジを先に描画する（ノードの下に）
     const edges = graph.getAllEdges();
     for (const edge of edges) {
-      this.renderEdge(edge);
+      const cap = edgeCapacity !== undefined ? edgeCapacity(edge.id) : 1;
+      this.renderEdge(edge, cap);
     }
 
     // ノードを上に描画する
@@ -112,9 +114,76 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  private renderEdge(edge: GraphEdge): void {
-    this.drawPath(edge.path, "#333333", 6);
-    this.drawPath(edge.path, "#888888", 3);
+  private renderEdge(edge: GraphEdge, capacity: number): void {
+    if (capacity >= 2) {
+      // 複線: 2本の線を平行に描画
+      const offset = 3;
+      this.drawOffsetPath(edge.path, "#333333", 4, offset);
+      this.drawOffsetPath(edge.path, "#333333", 4, -offset);
+      this.drawOffsetPath(edge.path, "#aaaaaa", 2, offset);
+      this.drawOffsetPath(edge.path, "#aaaaaa", 2, -offset);
+    } else {
+      // 単線
+      this.drawPath(edge.path, "#333333", 6);
+      this.drawPath(edge.path, "#888888", 3);
+    }
+  }
+
+  /** パスを垂直方向にオフセットして描画する */
+  private drawOffsetPath(
+    path: readonly PathNode[],
+    color: string,
+    lineWidth: number,
+    offset: number,
+  ): void {
+    if (path.length < 2) return;
+    const { ctx } = this;
+
+    ctx.beginPath();
+    for (let i = 0; i < path.length; i++) {
+      const curr = path[i];
+      if (curr === undefined) continue;
+
+      // 進行方向に対して垂直にオフセット
+      let nx = 0;
+      let ny = 0;
+      if (i < path.length - 1) {
+        const next = path[i + 1];
+        if (next !== undefined) {
+          const dx = next.x - curr.x;
+          const dy = next.y - curr.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len > 0) {
+            nx = -dy / len;
+            ny = dx / len;
+          }
+        }
+      } else if (i > 0) {
+        const prev = path[i - 1];
+        if (prev !== undefined) {
+          const dx = curr.x - prev.x;
+          const dy = curr.y - prev.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len > 0) {
+            nx = -dy / len;
+            ny = dx / len;
+          }
+        }
+      }
+
+      const px = curr.x * TILE_SIZE + HALF_TILE + nx * offset;
+      const py = curr.y * TILE_SIZE + HALF_TILE + ny * offset;
+      if (i === 0) {
+        ctx.moveTo(px, py);
+      } else {
+        ctx.lineTo(px, py);
+      }
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
   }
 
   private drawPath(
@@ -222,8 +291,17 @@ export class Renderer {
     camera.applyTransform(ctx, canvas);
 
     for (const pos of positions) {
-      const cx = pos.worldX * TILE_SIZE + HALF_TILE;
-      const cy = pos.worldY * TILE_SIZE + HALF_TILE;
+      let cx = pos.worldX * TILE_SIZE + HALF_TILE;
+      let cy = pos.worldY * TILE_SIZE + HALF_TILE;
+
+      // 複線の場合、進行方向に対して右側にオフセット
+      if (pos.edgeCapacity >= 2 && (pos.dirX !== 0 || pos.dirY !== 0)) {
+        // 右側 = 進行方向の法線（右手系: -dy, dx が左、dy, -dx が右）
+        const offsetDist = 3;
+        cx += pos.dirY * offsetDist;
+        cy += -pos.dirX * offsetDist;
+      }
+
       const size = TILE_SIZE * 0.4;
 
       // 列車の色：空なら青、貨物積載中ならオレンジ

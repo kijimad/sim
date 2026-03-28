@@ -200,6 +200,65 @@ describe("Edge blocking with routes", () => {
   });
 });
 
+describe("Debug world scenario", () => {
+  it("3 trains on branching routes do not deadlock at junction", () => {
+    //        C(30,10)
+    //       /
+    // A(10,20) --- B(30,20) --- D(50,20)
+    //       \
+    //        E(30,30)
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 10, 20, "A");
+    const b = graph.addNode(NodeKind.Station, 30, 20, "B");
+    const c = graph.addNode(NodeKind.Station, 30, 10, "C");
+    const d = graph.addNode(NodeKind.Station, 50, 20, "D");
+    graph.addNode(NodeKind.Station, 30, 30, "E");
+
+    graph.addEdge(a.id, b.id, makePath(21, 10, 20));
+    graph.addEdge(b.id, c.id, [
+      { x: 30, y: 20 }, { x: 30, y: 19 }, { x: 30, y: 18 }, { x: 30, y: 17 },
+      { x: 30, y: 16 }, { x: 30, y: 15 }, { x: 30, y: 14 }, { x: 30, y: 13 },
+      { x: 30, y: 12 }, { x: 30, y: 11 }, { x: 30, y: 10 },
+    ]);
+    graph.addEdge(b.id, d.id, makePath(21, 30, 20));
+
+    const sim = new Simulation();
+    const route1 = sim.addRoute([a.id, d.id], RouteMode.Shuttle, "A-D");
+    sim.addTrain(route1.id, graph);
+    sim.addTrain(route1.id, graph);
+
+    const route2 = sim.addRoute([a.id, c.id], RouteMode.Shuttle, "A-C");
+    sim.addTrain(route2.id, graph);
+
+    const dts = [0.016, 0.033, 0.05, 0.1, 0.016, 0.016, 0.033, 0.1, 0.05, 0.016];
+    for (let frame = 0; frame < 10000; frame++) {
+      const dt = dts[frame % dts.length] ?? 0.1;
+      sim.update(dt, graph);
+
+      // デッドロック検出: 全列車AtNodeで長時間待機
+      const allAtNode = sim.getAllTrains().every((t) => t.state === TrainState.AtNode);
+      if (allAtNode && frame > 100) {
+        // 全員ノードにいて誰もエッジに出ていない→数フレーム待ってまだなら失敗
+        let stuck = true;
+        for (let wait = 0; wait < 50; wait++) {
+          sim.update(0.1, graph);
+          if (sim.getAllTrains().some((t) => t.state === TrainState.OnEdge)) {
+            stuck = false;
+            break;
+          }
+        }
+        if (stuck) {
+          const trains = sim.getAllTrains();
+          const states = trains.map((t) =>
+            `T${String(t.id)}: state=${String(t.state)} node=${String(t.nodeId)} edge=${String(t.edgeId)}`,
+          ).join(", ");
+          expect.fail(`デッドロック at frame ${String(frame)}:\n${states}`);
+        }
+      }
+    }
+  });
+});
+
 describe("Unreachable route", () => {
   it("train does not move on unreachable route", () => {
     // A -- B    C (Cは孤立)

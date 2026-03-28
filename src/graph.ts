@@ -43,7 +43,7 @@ export interface GraphNode {
   readonly tileX: number;
   readonly tileY: number;
   name: string;
-  readonly capacity: number;
+  capacity: number;
   readonly signalLayout: SignalLayout;
 }
 
@@ -77,11 +77,40 @@ export class Graph {
   }
 
   removeNode(id: number): boolean {
+    // 接続エッジを収集
+    const connectedEdges: GraphEdge[] = [];
     for (const edge of this.edges.values()) {
       if (edge.fromId === id || edge.toId === id) {
+        connectedEdges.push(edge);
+      }
+    }
+
+    // エッジが2本の場合、前後のノードを直接接続し直す（パスを結合）
+    if (connectedEdges.length === 2) {
+      const e1 = connectedEdges[0];
+      const e2 = connectedEdges[1];
+      if (e1 !== undefined && e2 !== undefined) {
+        // e1の相手ノードとe2の相手ノードを特定
+        const other1 = e1.fromId === id ? e1.toId : e1.fromId;
+        const other2 = e2.fromId === id ? e2.toId : e2.fromId;
+
+        // パスを結合: e1のパス(other1→id) + e2のパス(id→other2)
+        const path1 = e1.toId === id ? [...e1.path] : [...e1.path].reverse();
+        const path2 = e2.fromId === id ? e2.path.slice(1) : [...e2.path].reverse().slice(1);
+        const mergedPath = [...path1, ...path2];
+
+        // 古いエッジを削除して新しいエッジを作成
+        this.edges.delete(e1.id);
+        this.edges.delete(e2.id);
+        this.addEdge(other1, other2, mergedPath);
+      }
+    } else {
+      // 2本以外: エッジを単純に削除
+      for (const edge of connectedEdges) {
         this.edges.delete(edge.id);
       }
     }
+
     return this.nodes.delete(id);
   }
 
