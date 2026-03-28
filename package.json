@@ -1,0 +1,23 @@
+{
+  "name": "sim",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.2",
+    "eslint": "^10.1.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.57.2",
+    "vite": "^8.0.3",
+    "vitest": "^4.1.2"
+  }
+}
