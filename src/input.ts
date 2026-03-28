@@ -4,6 +4,7 @@ import { TILE_SIZE } from "./renderer.js";
 export interface InputCallbacks {
   readonly requestRender: () => void;
   readonly onTileClick: (tileX: number, tileY: number) => void;
+  readonly onKeyPress: (key: string) => void;
 }
 
 export class InputHandler {
@@ -71,5 +72,9 @@ export class InputHandler {
       },
       { passive: false },
     );
+
+    window.addEventListener("keydown", (e: KeyboardEvent) => {
+      callbacks.onKeyPress(e.key);
+    });
   }
 }

@@ -75,6 +75,7 @@ export class Renderer {
     graph: Graph,
     camera: Camera,
     selectedNodeId: number | null,
+    nodeTrainCounts?: (nodeId: number) => number,
   ): void {
     const { ctx, canvas } = this;
     camera.applyTransform(ctx, canvas);
@@ -88,7 +89,8 @@ export class Renderer {
     // Draw nodes on top
     const nodes = graph.getAllNodes();
     for (const node of nodes) {
-      this.renderNode(node, node.id === selectedNodeId);
+      const trainCount = nodeTrainCounts !== undefined ? nodeTrainCounts(node.id) : 0;
+      this.renderNode(node, node.id === selectedNodeId, trainCount);
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -130,7 +132,7 @@ export class Renderer {
     ctx.stroke();
   }
 
-  private renderNode(node: GraphNode, selected: boolean): void {
+  private renderNode(node: GraphNode, selected: boolean, trainCount: number): void {
     const { ctx } = this;
     const cx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
     const cy = node.tileY * TILE_SIZE + TILE_SIZE / 2;
@@ -170,6 +172,20 @@ export class Renderer {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(node.name, cx, cy);
+
+    // Train count badge
+    if (trainCount > 0) {
+      const badgeX = cx + radius;
+      const badgeY = cy - radius;
+      const badgeR = TILE_SIZE * 0.2;
+      ctx.beginPath();
+      ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
+      ctx.fillStyle = "#2050d0";
+      ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `bold ${String(TILE_SIZE * 0.22)}px sans-serif`;
+      ctx.fillText(String(trainCount), badgeX, badgeY);
+    }
   }
 
   renderTrains(positions: readonly TrainPosition[], camera: Camera): void {

@@ -132,3 +132,85 @@ describe("Graph - Edges", () => {
     expect(graph.nodeCount).toBe(2);
   });
 });
+
+describe("Graph - splitEdge", () => {
+  it("splits an edge into two at a path index", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 5, 0, "B");
+    const path = Array.from({ length: 6 }, (_, i) => ({ x: i, y: 0 }));
+    const edge = graph.addEdge(a.id, b.id, path);
+
+    const s = graph.addNode(NodeKind.SignalStation, 3, 0, "S");
+    const result = graph.splitEdge(edge.id, s, 3);
+
+    expect(result).not.toBeNull();
+    if (result === null) return;
+
+    // Original edge removed
+    expect(graph.getEdge(edge.id)).toBeUndefined();
+    expect(graph.edgeCount).toBe(2);
+
+    // Edge1: A -> S, path [0..3]
+    expect(result.edge1.fromId).toBe(a.id);
+    expect(result.edge1.toId).toBe(s.id);
+    expect(result.edge1.path).toHaveLength(4);
+    expect(result.edge1.path[0]).toEqual({ x: 0, y: 0 });
+    expect(result.edge1.path[3]).toEqual({ x: 3, y: 0 });
+
+    // Edge2: S -> B, path [3..5]
+    expect(result.edge2.fromId).toBe(s.id);
+    expect(result.edge2.toId).toBe(b.id);
+    expect(result.edge2.path).toHaveLength(3);
+    expect(result.edge2.path[0]).toEqual({ x: 3, y: 0 });
+    expect(result.edge2.path[2]).toEqual({ x: 5, y: 0 });
+  });
+
+  it("returns null for invalid path index", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 2, 0, "B");
+    const path = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }];
+    const edge = graph.addEdge(a.id, b.id, path);
+    const s = graph.addNode(NodeKind.SignalStation, 1, 0, "S");
+
+    // Index 0 and last are endpoints, not valid split points
+    expect(graph.splitEdge(edge.id, s, 0)).toBeNull();
+    expect(graph.splitEdge(edge.id, s, 2)).toBeNull();
+  });
+
+  it("returns null for unknown edge", () => {
+    const graph = new Graph();
+    const s = graph.addNode(NodeKind.SignalStation, 0, 0, "S");
+    expect(graph.splitEdge(999, s, 1)).toBeNull();
+  });
+});
+
+describe("Graph - findClosestEdgePoint", () => {
+  it("finds the closest point on an edge", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 5, 0, "B");
+    const path = Array.from({ length: 6 }, (_, i) => ({ x: i, y: 0 }));
+    graph.addEdge(a.id, b.id, path);
+
+    const result = graph.findClosestEdgePoint(3, 0);
+    expect(result).not.toBeNull();
+    if (result === null) return;
+    expect(result.pathIndex).toBe(3);
+    expect(result.distance).toBe(0);
+  });
+
+  it("excludes endpoints from results", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 2, 0, "B");
+    graph.addEdge(a.id, b.id, [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }]);
+
+    // Closest to (0,0) would be index 0, but that's excluded
+    const result = graph.findClosestEdgePoint(0, 0);
+    expect(result).not.toBeNull();
+    if (result === null) return;
+    expect(result.pathIndex).toBe(1);
+  });
+});

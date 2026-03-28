@@ -8,6 +8,12 @@ export const NodeKind = {
 
 export type NodeKind = (typeof NodeKind)[keyof typeof NodeKind];
 
+const DEFAULT_CAPACITY: Record<NodeKind, number> = {
+  [NodeKind.Station]: 2,
+  [NodeKind.SignalStation]: 2,
+  [NodeKind.Signal]: 1,
+};
+
 export interface GraphNode {
   readonly id: number;
   readonly kind: NodeKind;
@@ -16,6 +22,8 @@ export interface GraphNode {
   /** Tile coordinate Y */
   readonly tileY: number;
   readonly name: string;
+  /** Number of trains that can occupy this node simultaneously */
+  readonly capacity: number;
 }
 
 export interface GraphEdge {
@@ -36,15 +44,16 @@ export class Graph {
     tileX: number,
     tileY: number,
     name: string,
+    capacity?: number,
   ): GraphNode {
     const id = this.nextId++;
-    const node: GraphNode = { id, kind, tileX, tileY, name };
+    const cap = capacity ?? DEFAULT_CAPACITY[kind];
+    const node: GraphNode = { id, kind, tileX, tileY, name, capacity: cap };
     this.nodes.set(id, node);
     return node;
   }
 
   removeNode(id: number): boolean {
-    // Remove all edges connected to this node
     for (const edge of this.edges.values()) {
       if (edge.fromId === id || edge.toId === id) {
         this.edges.delete(edge.id);
@@ -122,5 +131,56 @@ export class Graph {
 
   get edgeCount(): number {
     return this.edges.size;
+  }
+
+  /**
+   * Split an edge by inserting a node at a given path index.
+   * The original edge is removed and replaced by two new edges.
+   * Returns the new node and the two new edges, or null if invalid.
+   */
+  splitEdge(
+    edgeId: number,
+    node: GraphNode,
+    pathIndex: number,
+  ): { edge1: GraphEdge; edge2: GraphEdge } | null {
+    const edge = this.edges.get(edgeId);
+    if (edge === undefined) return null;
+    if (pathIndex <= 0 || pathIndex >= edge.path.length - 1) return null;
+
+    const path1 = edge.path.slice(0, pathIndex + 1);
+    const path2 = edge.path.slice(pathIndex);
+
+    this.edges.delete(edgeId);
+
+    const edge1 = this.addEdge(edge.fromId, node.id, path1);
+    const edge2 = this.addEdge(node.id, edge.toId, path2);
+
+    return { edge1, edge2 };
+  }
+
+  /**
+   * Find the closest path point on any edge to a tile coordinate.
+   * Returns the edge, path index, and distance, or null if none found.
+   */
+  findClosestEdgePoint(
+    tileX: number,
+    tileY: number,
+  ): { edge: GraphEdge; pathIndex: number; distance: number } | null {
+    let best: { edge: GraphEdge; pathIndex: number; distance: number } | null = null;
+
+    for (const edge of this.edges.values()) {
+      for (let i = 1; i < edge.path.length - 1; i++) {
+        const p = edge.path[i];
+        if (p === undefined) continue;
+        const dx = p.x - tileX;
+        const dy = p.y - tileY;
+        const dist = dx * dx + dy * dy;
+        if (best === null || dist < best.distance) {
+          best = { edge, pathIndex: i, distance: dist };
+        }
+      }
+    }
+
+    return best;
   }
 }
