@@ -24,8 +24,8 @@ const NEIGHBORS: readonly (readonly [number, number])[] = [
 ];
 
 /**
- * A* pathfinding on a tile map. Returns the path including start and end,
- * or null if no path exists.
+ * タイルマップ上のA*経路探索。開始点と終了点を含む経路を返す。
+ * 経路が存在しない場合はnullを返す。
  */
 export function findPath(
   map: TileMap,
@@ -52,14 +52,14 @@ export function findPath(
 
   const cameFrom = new Map<number, number>();
 
-  // Simple priority queue using sorted insertion (sufficient for game use)
+  // ソート挿入による簡易優先度キュー（ゲーム用途には十分）
   const open: number[] = [startKey];
   const inOpen = new Set<number>([startKey]);
 
   const getFScore = (k: number): number => fScore.get(k) ?? Infinity;
 
   while (open.length > 0) {
-    // Find node with lowest fScore
+    // 最小fScoreのノードを探す
     let bestIdx = 0;
     let bestF = getFScore(open[0] ?? 0);
     for (let i = 1; i < open.length; i++) {

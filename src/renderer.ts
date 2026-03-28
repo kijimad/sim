@@ -7,11 +7,20 @@ import { NodeKind } from "./graph.js";
 import { Terrain } from "./types.js";
 
 export const TILE_SIZE = 32;
+const HALF_TILE = TILE_SIZE / 2;
 
 const TERRAIN_COLORS: Record<Terrain, string> = {
   [Terrain.Flat]: "#7ec850",
   [Terrain.Mountain]: "#8b7355",
   [Terrain.Water]: "#4a80b4",
+};
+
+const BUILDING_COLORS: Record<number, string> = {
+  0: "#c08040", // 住宅 - 茶
+  1: "#4080c0", // 商業 - 青
+  2: "#60a030", // 農場 - 緑
+  3: "#808080", // 鉱山 - 灰
+  4: "#a04040", // 工場 - 赤
 };
 
 export class Renderer {
@@ -26,11 +35,11 @@ export class Renderer {
   render(map: TileMap, camera: Camera): void {
     const { ctx, canvas } = this;
 
-    // Clear with identity transform
+    // 単位行列変換でクリアする
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Compute visible tile range
+    // 表示可能なタイル範囲を計算する
     const topLeft = camera.screenToWorld(0, 0, canvas.width, canvas.height);
     const bottomRight = camera.screenToWorld(
       canvas.width,
@@ -44,10 +53,10 @@ export class Renderer {
     const maxTx = Math.min(map.width - 1, Math.floor(bottomRight.wx / TILE_SIZE));
     const maxTy = Math.min(map.height - 1, Math.floor(bottomRight.wy / TILE_SIZE));
 
-    // Apply camera transform
+    // カメラ変換を適用する
     camera.applyTransform(ctx, canvas);
 
-    // Draw visible tiles
+    // 表示可能なタイルを描画する
     for (let ty = minTy; ty <= maxTy; ty++) {
       for (let tx = minTx; tx <= maxTx; tx++) {
         const tile = map.get(tx, ty);
@@ -56,7 +65,7 @@ export class Renderer {
       }
     }
 
-    // Grid lines at higher zoom
+    // 高ズーム時のグリッド線
     if (camera.zoom > 1.0) {
       ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
       ctx.lineWidth = 0.5 / camera.zoom;
@@ -67,7 +76,7 @@ export class Renderer {
       }
     }
 
-    // Reset transform
+    // 変換をリセットする
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
@@ -80,13 +89,13 @@ export class Renderer {
     const { ctx, canvas } = this;
     camera.applyTransform(ctx, canvas);
 
-    // Draw edges first (below nodes)
+    // エッジを先に描画する（ノードの下に）
     const edges = graph.getAllEdges();
     for (const edge of edges) {
       this.renderEdge(edge);
     }
 
-    // Draw nodes on top
+    // ノードを上に描画する
     const nodes = graph.getAllNodes();
     for (const node of nodes) {
       const trainCount = nodeTrainCounts !== undefined ? nodeTrainCounts(node.id) : 0;
@@ -116,7 +125,7 @@ export class Renderer {
     const first = path[0];
     if (path.length < 2 || first === undefined) return;
     const { ctx } = this;
-    const half = TILE_SIZE / 2;
+    const half = HALF_TILE;
 
     ctx.beginPath();
     ctx.moveTo(first.x * TILE_SIZE + half, first.y * TILE_SIZE + half);
@@ -134,11 +143,11 @@ export class Renderer {
 
   private renderNode(node: GraphNode, selected: boolean, trainCount: number): void {
     const { ctx } = this;
-    const cx = node.tileX * TILE_SIZE + TILE_SIZE / 2;
-    const cy = node.tileY * TILE_SIZE + TILE_SIZE / 2;
+    const cx = node.tileX * TILE_SIZE + HALF_TILE;
+    const cy = node.tileY * TILE_SIZE + HALF_TILE;
     const radius = TILE_SIZE * 0.35;
 
-    // Selection highlight ring
+    // 選択ハイライトリング
     if (selected) {
       ctx.beginPath();
       ctx.arc(cx, cy, radius + 4, 0, Math.PI * 2);
@@ -166,14 +175,14 @@ export class Renderer {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Label
+    // ラベル
     ctx.fillStyle = "#ffffff";
     ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(node.name, cx, cy);
 
-    // Train count badge
+    // 列車数バッジ
     if (trainCount > 0) {
       const badgeX = cx + radius;
       const badgeY = cy - radius;
@@ -193,18 +202,18 @@ export class Renderer {
     camera.applyTransform(ctx, canvas);
 
     for (const pos of positions) {
-      const cx = pos.worldX * TILE_SIZE + TILE_SIZE / 2;
-      const cy = pos.worldY * TILE_SIZE + TILE_SIZE / 2;
+      const cx = pos.worldX * TILE_SIZE + HALF_TILE;
+      const cy = pos.worldY * TILE_SIZE + HALF_TILE;
       const size = TILE_SIZE * 0.4;
 
-      // Train color: blue if empty, orange if carrying cargo
+      // 列車の色：空なら青、貨物積載中ならオレンジ
       ctx.fillStyle = pos.cargoTotal > 0 ? "#d08020" : "#2050d0";
       ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1.5;
       ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
 
-      // Cargo amount label
+      // 貨物量ラベル
       if (pos.cargoTotal > 0) {
         ctx.fillStyle = "#ffffff";
         ctx.font = `bold ${String(TILE_SIZE * 0.22)}px sans-serif`;
@@ -225,10 +234,10 @@ export class Renderer {
     camera.applyTransform(ctx, canvas);
 
     for (const city of cities) {
-      const cx = city.tileX * TILE_SIZE + TILE_SIZE / 2;
-      const cy = city.tileY * TILE_SIZE + TILE_SIZE / 2;
+      const cx = city.tileX * TILE_SIZE + HALF_TILE;
+      const cy = city.tileY * TILE_SIZE + HALF_TILE;
 
-      // City area
+      // 都市エリア
       if (city.radius !== undefined) {
         const r = city.radius * TILE_SIZE;
         ctx.fillStyle = "rgba(200, 160, 60, 0.08)";
@@ -240,7 +249,7 @@ export class Renderer {
         ctx.setLineDash([]);
       }
 
-      // Name label
+      // 名前ラベル
       ctx.fillStyle = "#ffffff";
       ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
       ctx.textAlign = "center";
@@ -257,14 +266,6 @@ export class Renderer {
   ): void {
     const { ctx, canvas } = this;
     camera.applyTransform(ctx, canvas);
-
-    const BUILDING_COLORS: Record<number, string> = {
-      0: "#c08040", // Residence - brown
-      1: "#4080c0", // Commercial - blue
-      2: "#60a030", // Farm - green
-      3: "#808080", // Mine - grey
-      4: "#a04040", // Factory - red
-    };
 
     for (const b of buildings) {
       const x = b.tileX * TILE_SIZE;

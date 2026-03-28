@@ -1,14 +1,50 @@
 import { useSyncExternalStore } from "react";
 import type { Game, GameSnapshot } from "../game.js";
-import { ToolMode } from "../game.js";
+import { RailSubMode, ToolMode } from "../game.js";
+import { InspectPanel } from "./InspectPanel.js";
+import { RouteList } from "./RouteList.js";
 import { RoutePanel } from "./RoutePanel.js";
+import { StatusPanel } from "./StatusPanel.js";
 import { Toolbar } from "./Toolbar.js";
 
 interface GameUIProps {
   readonly game: Game;
 }
 
-export function GameUI({ game }: GameUIProps): React.JSX.Element {
+function RailPanel({ snap, game }: { snap: GameSnapshot; game: Game }) {
+  return (
+    <div className="rail-panel">
+      <div className="panel-header">Rail</div>
+      <div className="rail-submodes">
+        <button
+          className={snap.railSubMode === RailSubMode.Station ? "active" : ""}
+          onClick={() => { game.setRailSubMode(RailSubMode.Station); }}
+        >
+          Station
+        </button>
+        <button
+          className={snap.railSubMode === RailSubMode.SignalPassing ? "active" : ""}
+          onClick={() => { game.setRailSubMode(RailSubMode.SignalPassing); }}
+        >
+          Signal (pass)
+        </button>
+        <button
+          className={snap.railSubMode === RailSubMode.SignalOvertaking ? "active" : ""}
+          onClick={() => { game.setRailSubMode(RailSubMode.SignalOvertaking); }}
+        >
+          Signal (overtake)
+        </button>
+      </div>
+      <div className="rail-hint">
+        {snap.selectedNodeId !== null
+          ? "Click another node to connect, or empty tile to place"
+          : "Click to place, or click an edge to split"}
+      </div>
+    </div>
+  );
+}
+
+export function GameUI({ game }: GameUIProps) {
   const snap = useSyncExternalStore<GameSnapshot>(
     (cb) => game.onChange(cb),
     () => game.getSnapshot(),
@@ -16,31 +52,34 @@ export function GameUI({ game }: GameUIProps): React.JSX.Element {
 
   return (
     <div className="game-ui">
-      <Toolbar
-        toolMode={snap.toolMode}
-        onSetTool={(mode) => { game.setToolMode(mode); }}
-      />
-      {snap.toolMode === ToolMode.Route ? (
-        <RoutePanel
-          stops={snap.routeStops}
-          onConfirm={(mode) => { game.confirmRoute(mode); }}
-          onCancel={() => { game.cancelRoute(); }}
-          onAddTrain={() => { game.addTrain(); }}
-          lastRouteId={snap.lastRouteId}
-          trainCount={snap.trainCount}
+      <div className="top-bar">
+        <Toolbar
+          toolMode={snap.toolMode}
+          onSetTool={(mode) => { game.setToolMode(mode); }}
         />
-      ) : (
-        <div className="status-bar">
-          <span>Routes: {snap.routeCount}</span>
-          <span>Trains: {snap.trainCount}</span>
-          <button
-            disabled={snap.lastRouteId === null}
-            onClick={() => { game.addTrain(); }}
-          >
-            Add Train (T)
-          </button>
-        </div>
-      )}
+        <StatusPanel snap={snap} />
+      </div>
+
+      <div className="side-panel">
+        {snap.toolMode === ToolMode.Inspect && (
+          <InspectPanel info={snap.inspect} game={game} />
+        )}
+        {snap.toolMode === ToolMode.Rail && (
+          <RailPanel snap={snap} game={game} />
+        )}
+        {snap.toolMode === ToolMode.Route && (
+          <RoutePanel
+            stops={snap.routeStops}
+            onConfirm={(mode) => { game.confirmRoute(mode); }}
+            onCancel={() => { game.cancelRoute(); }}
+          />
+        )}
+        <RouteList
+          routes={snap.routes}
+          lastRouteId={snap.lastRouteId}
+          game={game}
+        />
+      </div>
     </div>
   );
 }

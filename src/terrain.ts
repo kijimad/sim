@@ -2,7 +2,7 @@ import type { TileMap } from "./tilemap.js";
 import { Terrain } from "./types.js";
 
 /**
- * Xorshift32 PRNG. Returns a function that produces values in [0, 1).
+ * Xorshift32 疑似乱数生成器。[0, 1) の範囲の値を生成する関数を返す。
  */
 function createRng(seed: number): () => number {
   let state = seed | 0 || 1;
@@ -15,7 +15,7 @@ function createRng(seed: number): () => number {
 }
 
 /**
- * Generate a 2D grid of random values and sample with bilinear interpolation.
+ * 2Dグリッドのランダム値を生成し、バイリニア補間でサンプリングする。
  */
 function createNoiseLayer(
   rng: () => number,
@@ -34,7 +34,7 @@ function createNoiseLayer(
     const fx = gx - x0;
     const fy = gy - y0;
 
-    // Smoothstep for smoother interpolation
+    // より滑らかな補間のためのSmoothstep
     const sx = fx * fx * (3 - 2 * fx);
     const sy = fy * fy * (3 - 2 * fy);
 

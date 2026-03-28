@@ -4,26 +4,18 @@ interface RoutePanelProps {
   readonly stops: readonly number[];
   readonly onConfirm: (mode: RouteMode) => void;
   readonly onCancel: () => void;
-  readonly onAddTrain: () => void;
-  readonly lastRouteId: number | null;
-  readonly trainCount: number;
 }
 
-export function RoutePanel({
-  stops,
-  onConfirm,
-  onCancel,
-  onAddTrain,
-  lastRouteId,
-  trainCount,
-}: RoutePanelProps): React.JSX.Element {
+export function RoutePanel({ stops, onConfirm, onCancel }: RoutePanelProps) {
   return (
     <div className="route-panel">
+      <div className="panel-header">Create Route</div>
       <div className="route-stops">
-        <strong>Route stops:</strong>
         {stops.length === 0
-          ? " Click stations to add stops"
-          : ` ${stops.map((id) => `#${String(id)}`).join(" → ")}`}
+          ? "Click stations to add stops"
+          : stops.map((id, i) => (
+              <span key={`${String(id)}-${String(i)}`} className="stop-badge">#{id}</span>
+            ))}
       </div>
       <div className="route-actions">
         <button
@@ -38,16 +30,7 @@ export function RoutePanel({
         >
           Loop
         </button>
-        <button onClick={onCancel}>Cancel (Esc)</button>
-      </div>
-      <div className="train-actions">
-        <button
-          disabled={lastRouteId === null}
-          onClick={onAddTrain}
-        >
-          Add Train (T)
-        </button>
-        <span>Trains: {trainCount}</span>
+        <button onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );

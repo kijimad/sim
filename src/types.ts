@@ -6,6 +6,12 @@ export const Terrain = {
 
 export type Terrain = (typeof Terrain)[keyof typeof Terrain];
 
+export const TERRAIN_NAMES: Record<Terrain, string> = {
+  [Terrain.Flat]: "Flat",
+  [Terrain.Mountain]: "Mountain",
+  [Terrain.Water]: "Water",
+};
+
 export interface Tile {
   readonly terrain: Terrain;
 }

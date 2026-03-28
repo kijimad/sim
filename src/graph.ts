@@ -14,23 +14,44 @@ const DEFAULT_CAPACITY: Record<NodeKind, number> = {
   [NodeKind.Signal]: 1,
 };
 
+/**
+ * 信号場の線路配置。
+ * - passing: 方向ごとに1線路（対向列車がすれ違い可能）
+ * - overtaking: 同方向に2線路（後続列車が待機可能）
+ */
+export const SignalLayout = {
+  Passing: 0,
+  Overtaking: 1,
+} as const;
+
+export type SignalLayout = (typeof SignalLayout)[keyof typeof SignalLayout];
+
+export const NODE_KIND_NAMES: Record<NodeKind, string> = {
+  [NodeKind.Station]: "Station",
+  [NodeKind.SignalStation]: "Signal Station",
+  [NodeKind.Signal]: "Signal",
+};
+
+export const SIGNAL_LAYOUT_NAMES: Record<SignalLayout, string> = {
+  [SignalLayout.Passing]: "Passing",
+  [SignalLayout.Overtaking]: "Overtaking",
+};
+
 export interface GraphNode {
   readonly id: number;
   readonly kind: NodeKind;
-  /** Tile coordinate X */
   readonly tileX: number;
-  /** Tile coordinate Y */
   readonly tileY: number;
   readonly name: string;
-  /** Number of trains that can occupy this node simultaneously */
   readonly capacity: number;
+  readonly signalLayout: SignalLayout;
 }
 
 export interface GraphEdge {
   readonly id: number;
   readonly fromId: number;
   readonly toId: number;
-  /** Tile path from source node to destination node (inclusive) */
+  /** 始点ノードから終点ノードまでのタイルパス（両端を含む） */
   readonly path: readonly PathNode[];
 }
 
@@ -45,10 +66,12 @@ export class Graph {
     tileY: number,
     name: string,
     capacity?: number,
+    signalLayout?: SignalLayout,
   ): GraphNode {
     const id = this.nextId++;
     const cap = capacity ?? DEFAULT_CAPACITY[kind];
-    const node: GraphNode = { id, kind, tileX, tileY, name, capacity: cap };
+    const layout = signalLayout ?? SignalLayout.Passing;
+    const node: GraphNode = { id, kind, tileX, tileY, name, capacity: cap, signalLayout: layout };
     this.nodes.set(id, node);
     return node;
   }
@@ -134,9 +157,9 @@ export class Graph {
   }
 
   /**
-   * Split an edge by inserting a node at a given path index.
-   * The original edge is removed and replaced by two new edges.
-   * Returns the new node and the two new edges, or null if invalid.
+   * 指定されたパスインデックスにノードを挿入してエッジを分割する。
+   * 元のエッジは削除され、2つの新しいエッジに置き換えられる。
+   * 新しいノードと2つの新しいエッジを返す。無効な場合はnullを返す。
    */
   splitEdge(
     edgeId: number,
@@ -159,8 +182,8 @@ export class Graph {
   }
 
   /**
-   * Find the closest path point on any edge to a tile coordinate.
-   * Returns the edge, path index, and distance, or null if none found.
+   * タイル座標に最も近いエッジ上のパスポイントを見つける。
+   * エッジ、パスインデックス、距離を返す。見つからない場合はnullを返す。
    */
   findClosestEdgePoint(
     tileX: number,

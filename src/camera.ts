@@ -1,7 +1,7 @@
 export class Camera {
-  /** World-space center X (in pixels) */
+  /** ワールド空間の中心X座標（ピクセル単位） */
   x: number;
-  /** World-space center Y (in pixels) */
+  /** ワールド空間の中心Y座標（ピクセル単位） */
   y: number;
   zoom: number;
 
@@ -39,13 +39,13 @@ export class Camera {
     );
   }
 
-  /** Pan by screen-space delta */
+  /** スクリーン空間のデルタ値でパンする */
   pan(screenDx: number, screenDy: number): void {
     this.x -= screenDx / this.zoom;
     this.y -= screenDy / this.zoom;
   }
 
-  /** Zoom toward a screen-space point */
+  /** スクリーン空間の座標に向かってズームする */
   zoomAt(
     screenX: number,
     screenY: number,

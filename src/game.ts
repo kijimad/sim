@@ -1,34 +1,86 @@
 import type { RouteMode } from "./simulation.js";
 import { Camera } from "./camera.js";
-import { Economy, generateCities } from "./economy.js";
-import { Graph, NodeKind } from "./graph.js";
+import { BUILDING_TYPE_NAMES, Economy, RESOURCE_NAMES, Resource, generateCities } from "./economy.js";
+import { Graph, NODE_KIND_NAMES, NodeKind, SIGNAL_LAYOUT_NAMES, SignalLayout } from "./graph.js";
 import { InputHandler } from "./input.js";
 import { findPath } from "./pathfinding.js";
 import { Renderer, TILE_SIZE } from "./renderer.js";
-import { Simulation } from "./simulation.js";
+import { ROUTE_MODE_NAMES, Simulation } from "./simulation.js";
 import { generateTerrain } from "./terrain.js";
 import { TileMap } from "./tilemap.js";
-import { Terrain } from "./types.js";
+import { TERRAIN_NAMES, Terrain } from "./types.js";
 
 export const ToolMode = {
-  Station: "station",
-  SignalStation: "signal-station",
+  Inspect: "inspect",
+  Rail: "rail",
   Route: "route",
 } as const;
 
 export type ToolMode = (typeof ToolMode)[keyof typeof ToolMode];
 
+export const RailSubMode = {
+  Station: "station",
+  SignalPassing: "signal-passing",
+  SignalOvertaking: "signal-overtaking",
+} as const;
+
+export type RailSubMode = (typeof RailSubMode)[keyof typeof RailSubMode];
+
 const MAP_SIZE = 256;
+
+export interface RouteInfo {
+  readonly id: number;
+  readonly stops: readonly number[];
+  readonly mode: string;
+  readonly trainCount: number;
+}
+
+export interface CityInfo {
+  readonly name: string;
+  readonly population: number;
+}
+
+export interface InspectInfo {
+  readonly type: "none" | "node" | "city" | "terrain" | "edge";
+  readonly edgeId?: number;
+  readonly edgeFrom?: string;
+  readonly edgeTo?: string;
+  readonly edgeLength?: number;
+  readonly edgeReservedBy?: number;
+  readonly nodeId?: number;
+  readonly nodeName?: string;
+  readonly nodeKind?: string;
+  readonly nodeCapacity?: number;
+  readonly nodeLayout?: string;
+  readonly nodeTrains?: number;
+  readonly nodeWaiting?: number;
+  readonly waitingDetail?: readonly { resource: string; amount: number }[];
+  readonly cityName?: string;
+  readonly cityPopulation?: number;
+  readonly cityProduces?: readonly string[];
+  readonly cityConsumes?: readonly string[];
+  readonly terrain?: string;
+  readonly tileX?: number;
+  readonly tileY?: number;
+  readonly buildingType?: string;
+  readonly buildingPop?: number;
+  readonly buildingProduces?: string;
+  readonly buildingConsumes?: string;
+}
 
 export interface GameSnapshot {
   readonly toolMode: ToolMode;
+  readonly railSubMode: RailSubMode;
   readonly selectedNodeId: number | null;
   readonly routeStops: readonly number[];
   readonly lastRouteId: number | null;
   readonly trainCount: number;
   readonly routeCount: number;
   readonly money: number;
-  readonly cityCount: number;
+  readonly cities: readonly CityInfo[];
+  readonly routes: readonly RouteInfo[];
+  readonly totalPopulation: number;
+  readonly inspect: InspectInfo;
 }
 
 export type GameEventListener = () => void;
@@ -42,11 +94,14 @@ export class Game {
   private readonly map: TileMap;
   private readonly camera: Camera;
 
-  private toolMode: ToolMode = ToolMode.Station;
+  private toolMode: ToolMode = ToolMode.Inspect;
+  private railSubMode: RailSubMode = RailSubMode.Station;
   private selectedNodeId: number | null = null;
   private routeStops: number[] = [];
   private lastRouteId: number | null = null;
   private stationCount = 0;
+  private inspectTileX: number | null = null;
+  private inspectTileY: number | null = null;
 
   private listeners: GameEventListener[] = [];
   private lastTime = performance.now();
@@ -67,7 +122,7 @@ export class Game {
     const seed = Date.now();
     generateCities(this.map, this.economy, 8, seed);
 
-    // Wire up train arrival to economy
+    // 列車到着を経済システムに接続する
     this.sim.onTrainArrive = (train, nodeId): void => {
       const { newCargo } = this.economy.trainArrive(nodeId, train.cargo, this.graph);
       train.cargo = newCargo;
@@ -83,7 +138,7 @@ export class Game {
     });
   }
 
-  // --- Subscription ---
+  // --- 購読 ---
 
   onChange(listener: GameEventListener): () => void {
     this.listeners.push(listener);
@@ -102,18 +157,114 @@ export class Game {
   getSnapshot(): GameSnapshot {
     this.cachedSnapshot ??= {
       toolMode: this.toolMode,
+      railSubMode: this.railSubMode,
       selectedNodeId: this.selectedNodeId,
       routeStops: [...this.routeStops],
       lastRouteId: this.lastRouteId,
       trainCount: this.sim.trainCount,
       routeCount: this.sim.getAllRoutes().length,
       money: this.economy.money,
-      cityCount: this.economy.getAllCities().length,
+      totalPopulation: this.economy.getTotalPopulation(),
+      cities: this.economy.getAllCities().map((c) => ({
+        name: c.name,
+        population: this.economy.getCityPopulation(c.id),
+      })),
+      routes: this.sim.getAllRoutes().map((r) => ({
+        id: r.id,
+        stops: r.stops,
+        mode: ROUTE_MODE_NAMES[r.mode],
+        trainCount: this.sim.getRouteTrainCount(r.id),
+      })),
+      inspect: this.buildInspectInfo(),
     };
     return this.cachedSnapshot;
   }
 
-  // --- Lifecycle ---
+  private buildInspectInfo(): InspectInfo {
+    const tx = this.inspectTileX;
+    const ty = this.inspectTileY;
+    if (tx === null || ty === null || !this.map.inBounds(tx, ty)) {
+      return { type: "none" };
+    }
+
+    const tile = this.map.get(tx, ty);
+    const base: InspectInfo = {
+      type: "terrain",
+      tileX: tx,
+      tileY: ty,
+      terrain: TERRAIN_NAMES[tile.terrain],
+    };
+
+    // 建物を確認する
+    const building = this.economy.getBuildingAt(tx, ty);
+    if (building !== undefined) {
+      return {
+        ...base,
+        buildingType: BUILDING_TYPE_NAMES[building.type],
+        buildingPop: building.population,
+        ...(building.produces !== null ? { buildingProduces: RESOURCE_NAMES[building.produces] } : {}),
+        ...(building.consumes !== null ? { buildingConsumes: RESOURCE_NAMES[building.consumes] } : {}),
+      };
+    }
+
+    // ノードを確認する
+    const node = this.graph.getNodeAt(tx, ty);
+    if (node !== undefined) {
+      const waitingDetail: { resource: string; amount: number }[] = [];
+      const allResources = [Resource.Passengers, Resource.Rice, Resource.Iron, Resource.Goods] as const;
+      for (const r of allResources) {
+        const amount = this.economy.getWaiting(node.id, r);
+        if (amount > 0) {
+          waitingDetail.push({ resource: RESOURCE_NAMES[r], amount });
+        }
+      }
+      return {
+        ...base,
+        type: "node" as const,
+        nodeId: node.id,
+        nodeName: node.name,
+        nodeKind: NODE_KIND_NAMES[node.kind],
+        nodeCapacity: node.capacity,
+        ...(node.kind === NodeKind.SignalStation ? { nodeLayout: SIGNAL_LAYOUT_NAMES[node.signalLayout] } : {}),
+        nodeTrains: this.sim.getNodeTrainCount(node.id),
+        nodeWaiting: this.economy.getTotalWaiting(node.id),
+        waitingDetail,
+      };
+    }
+
+    // 都市を確認する
+    const city = this.economy.getCityAt(tx, ty);
+    if (city !== undefined) {
+      const resources = this.economy.getCityResources(city.id);
+      return {
+        ...base,
+        type: "city" as const,
+        cityName: city.name,
+        cityPopulation: this.economy.getCityPopulation(city.id),
+        cityProduces: [...resources.produces].map((r) => RESOURCE_NAMES[r]),
+        cityConsumes: [...resources.consumes].map((r) => RESOURCE_NAMES[r]),
+      };
+    }
+
+    // エッジを確認する
+    const closest = this.graph.findClosestEdgePoint(tx, ty);
+    if (closest !== null && closest.distance <= 1) {
+      const fromNode = this.graph.getNode(closest.edge.fromId);
+      const toNode = this.graph.getNode(closest.edge.toId);
+      return {
+        ...base,
+        type: "edge" as const,
+        edgeId: closest.edge.id,
+        edgeFrom: fromNode?.name ?? String(closest.edge.fromId),
+        edgeTo: toNode?.name ?? String(closest.edge.toId),
+        edgeLength: closest.edge.path.length,
+      };
+    }
+
+    return base;
+  }
+
+  // --- ライフサイクル ---
 
   start(): void {
     this.resize();
@@ -166,7 +317,7 @@ export class Game {
     this.canvas.style.height = `${String(window.innerHeight)}px`;
   }
 
-  // --- Actions (called from UI) ---
+  // --- アクション（UIから呼び出される） ---
 
   setToolMode(mode: ToolMode): void {
     this.toolMode = mode;
@@ -175,9 +326,20 @@ export class Game {
     this.notify();
   }
 
-  addTrain(): void {
-    if (this.lastRouteId === null) return;
-    this.sim.addTrain(this.lastRouteId, this.graph);
+  setRailSubMode(mode: RailSubMode): void {
+    this.railSubMode = mode;
+    this.notify();
+  }
+
+  addTrain(routeId?: number): void {
+    const id = routeId ?? this.lastRouteId;
+    if (id === null) return;
+    this.sim.addTrain(id, this.graph);
+    this.notify();
+  }
+
+  selectRoute(routeId: number): void {
+    this.lastRouteId = routeId;
     this.notify();
   }
 
@@ -190,16 +352,61 @@ export class Game {
     this.notify();
   }
 
+  removeRoute(routeId: number): void {
+    // まずこの路線の全列車を削除する
+    for (const train of this.sim.getAllTrains()) {
+      if (train.routeId === routeId) {
+        this.sim.removeTrain(train.id);
+      }
+    }
+    this.sim.removeRoute(routeId);
+    if (this.lastRouteId === routeId) {
+      this.lastRouteId = null;
+    }
+    this.notify();
+  }
+
+  removeTrainFromRoute(routeId: number): void {
+    // この路線の最後の列車を削除する
+    const trains = this.sim.getAllTrains().filter((t) => t.routeId === routeId);
+    const last = trains[trains.length - 1];
+    if (last !== undefined) {
+      this.sim.removeTrain(last.id);
+    }
+    this.notify();
+  }
+
+  removeEdge(edgeId: number): void {
+    this.graph.removeEdge(edgeId);
+    this.notify();
+  }
+
+  removeNode(nodeId: number): void {
+    this.graph.removeNode(nodeId);
+    this.inspectTileX = null;
+    this.inspectTileY = null;
+    this.notify();
+  }
+
   cancelRoute(): void {
     this.routeStops = [];
     this.selectedNodeId = null;
     this.notify();
   }
 
-  // --- Input handling ---
+  // --- 入力処理 ---
 
   private onTileClick(tileX: number, tileY: number): void {
     if (!this.map.inBounds(tileX, tileY)) return;
+
+    // 常にインスペクト対象を更新する
+    this.inspectTileX = tileX;
+    this.inspectTileY = tileY;
+
+    if (this.toolMode === ToolMode.Inspect) {
+      this.notify();
+      return;
+    }
 
     if (this.toolMode === ToolMode.Route) {
       this.handleRouteClick(tileX, tileY);
@@ -211,11 +418,16 @@ export class Game {
 
   private onKeyPress(key: string): void {
     switch (key) {
+      case "`":
+        this.setToolMode(ToolMode.Inspect);
+        break;
       case "1":
-        this.setToolMode(ToolMode.Station);
+        this.setToolMode(ToolMode.Rail);
+        this.railSubMode = RailSubMode.Station;
         break;
       case "2":
-        this.setToolMode(ToolMode.SignalStation);
+        this.setToolMode(ToolMode.Rail);
+        this.railSubMode = RailSubMode.SignalPassing;
         break;
       case "3":
         this.setToolMode(ToolMode.Route);
@@ -238,7 +450,7 @@ export class Game {
   private handleRouteClick(tileX: number, tileY: number): void {
     const node = this.graph.getNodeAt(tileX, tileY);
     if (node === undefined) return;
-    if (node.kind !== NodeKind.Station) return; // Only stations as stops
+    if (node.kind !== NodeKind.Station) return; // 停車駅は駅のみ
 
     this.routeStops.push(node.id);
     this.selectedNodeId = node.id;
@@ -260,13 +472,13 @@ export class Game {
     } else {
       if (this.map.get(tileX, tileY).terrain === Terrain.Water) return;
 
-      // If no node selected and clicking near an existing edge, split it
+      // ノード未選択で既存エッジの近くをクリックした場合、エッジを分割する
       if (this.selectedNodeId === null) {
         if (this.trySplitEdge(tileX, tileY)) return;
       }
 
-      const { kind, name } = this.makeNodeInfo();
-      const node = this.graph.addNode(kind, tileX, tileY, name);
+      const { kind, name, signalLayout } = this.makeNodeInfo();
+      const node = this.graph.addNode(kind, tileX, tileY, name, undefined, signalLayout);
 
       if (this.selectedNodeId !== null) {
         this.connectNodes(this.selectedNodeId, node.id);
@@ -276,9 +488,12 @@ export class Game {
     this.notify();
   }
 
-  private makeNodeInfo(): { kind: NodeKind; name: string } {
-    if (this.toolMode === ToolMode.SignalStation) {
-      return { kind: NodeKind.SignalStation, name: "S" };
+  private makeNodeInfo(): { kind: NodeKind; name: string; signalLayout?: SignalLayout } {
+    if (this.railSubMode === RailSubMode.SignalPassing) {
+      return { kind: NodeKind.SignalStation, name: "S", signalLayout: SignalLayout.Passing };
+    }
+    if (this.railSubMode === RailSubMode.SignalOvertaking) {
+      return { kind: NodeKind.SignalStation, name: "S", signalLayout: SignalLayout.Overtaking };
     }
     this.stationCount++;
     return { kind: NodeKind.Station, name: String(this.stationCount) };
@@ -303,8 +518,8 @@ export class Game {
     const pathPoint = closest.edge.path[closest.pathIndex];
     if (pathPoint === undefined) return false;
 
-    const { kind, name } = this.makeNodeInfo();
-    const node = this.graph.addNode(kind, pathPoint.x, pathPoint.y, name);
+    const { kind, name, signalLayout } = this.makeNodeInfo();
+    const node = this.graph.addNode(kind, pathPoint.x, pathPoint.y, name, undefined, signalLayout);
     this.graph.splitEdge(closest.edge.id, node, closest.pathIndex);
     this.notify();
     return true;

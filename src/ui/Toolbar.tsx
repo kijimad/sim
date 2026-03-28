@@ -6,12 +6,12 @@ interface ToolbarProps {
 }
 
 const tools: { mode: ToolMode; label: string; key: string }[] = [
-  { mode: TM.Station, label: "Station", key: "1" },
-  { mode: TM.SignalStation, label: "Signal Station", key: "2" },
+  { mode: TM.Inspect, label: "Inspect", key: "`" },
+  { mode: TM.Rail, label: "Rail", key: "1" },
   { mode: TM.Route, label: "Route", key: "3" },
 ];
 
-export function Toolbar({ toolMode, onSetTool }: ToolbarProps): React.JSX.Element {
+export function Toolbar({ toolMode, onSetTool }: ToolbarProps) {
   return (
     <div className="toolbar">
       {tools.map((t) => (
