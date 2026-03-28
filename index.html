@@ -8,6 +8,7 @@
       * {
         margin: 0;
         padding: 0;
+        box-sizing: border-box;
       }
       html,
       body {
@@ -18,23 +19,11 @@
       canvas {
         display: block;
       }
-      #hud {
-        position: fixed;
-        top: 8px;
-        left: 8px;
-        color: #fff;
-        background: rgba(0, 0, 0, 0.6);
-        padding: 6px 12px;
-        font: 14px monospace;
-        border-radius: 4px;
-        pointer-events: none;
-        z-index: 10;
-      }
     </style>
   </head>
   <body>
-    <div id="hud"></div>
     <canvas id="game"></canvas>
-    <script type="module" src="/src/main.ts"></script>
+    <div id="ui"></div>
+    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

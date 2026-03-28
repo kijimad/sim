@@ -25,4 +25,10 @@ export default tseslint.config(
       eqeqeq: ["error", "always"],
     },
   },
+  {
+    files: ["**/*.tsx"],
+    rules: {
+      "@typescript-eslint/explicit-function-return-type": "off",
+    },
+  },
 );
