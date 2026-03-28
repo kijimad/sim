@@ -3,6 +3,7 @@ import { Graph, NodeKind } from "./graph.js";
 import { InputHandler } from "./input.js";
 import { findPath } from "./pathfinding.js";
 import { Renderer, TILE_SIZE } from "./renderer.js";
+import { Simulation } from "./simulation.js";
 import { generateTerrain } from "./terrain.js";
 import { TileMap } from "./tilemap.js";
 import { Terrain } from "./types.js";
@@ -37,6 +38,7 @@ function main(): void {
   generateTerrain(map, { seed: Date.now() });
 
   const graph = new Graph();
+  const sim = new Simulation();
   let stationCount = 0;
   let selectedNodeId: number | null = null;
 
@@ -44,9 +46,8 @@ function main(): void {
   const camera = new Camera(centerWorld, centerWorld);
   const renderer = new Renderer(ctx, canvas);
 
-  let dirty = true;
   const requestRender = (): void => {
-    dirty = true;
+    // Rendering is now continuous due to simulation
   };
 
   const onTileClick = (tileX: number, tileY: number): void => {
@@ -55,63 +56,61 @@ function main(): void {
     const existing = graph.getNodeAt(tileX, tileY);
 
     if (existing !== undefined) {
-      // Click on existing node
       if (selectedNodeId === null) {
-        // Select it
         selectedNodeId = existing.id;
       } else if (selectedNodeId === existing.id) {
-        // Deselect
         selectedNodeId = null;
       } else {
-        // Connect selected node to this node
         const fromNode = graph.getNode(selectedNodeId);
         if (fromNode !== undefined) {
-          // Check no duplicate edge
           const existingEdge = graph.getEdgesBetween(selectedNodeId, existing.id);
           if (existingEdge === undefined) {
             const path = findPath(map, fromNode.tileX, fromNode.tileY, existing.tileX, existing.tileY);
             if (path !== null) {
-              graph.addEdge(selectedNodeId, existing.id, path);
+              const edge = graph.addEdge(selectedNodeId, existing.id, path);
+              sim.addTrain(edge.id);
             }
           }
         }
         selectedNodeId = null;
       }
     } else {
-      // Click on empty tile - place station if not water
       if (map.get(tileX, tileY).terrain === Terrain.Water) return;
       stationCount++;
       const node = graph.addNode(NodeKind.Station, tileX, tileY, String(stationCount));
 
-      // If a node was selected, auto-connect
       if (selectedNodeId !== null) {
         const fromNode = graph.getNode(selectedNodeId);
         if (fromNode !== undefined) {
           const path = findPath(map, fromNode.tileX, fromNode.tileY, tileX, tileY);
           if (path !== null) {
-            graph.addEdge(selectedNodeId, node.id, path);
+            const edge = graph.addEdge(selectedNodeId, node.id, path);
+            sim.addTrain(edge.id);
           }
         }
         selectedNodeId = null;
       }
     }
-    requestRender();
   };
 
   new InputHandler(canvas, camera, { requestRender, onTileClick });
 
   window.addEventListener("resize", () => {
     resizeCanvas(canvas);
-    requestRender();
   });
 
-  const loop = (): void => {
-    if (dirty) {
-      renderer.render(map, camera);
-      renderer.renderGraph(graph, camera, selectedNodeId);
+  let lastTime = performance.now();
 
-      dirty = false;
-    }
+  const loop = (now: number): void => {
+    const dt = Math.min((now - lastTime) / 1000, 0.1);
+    lastTime = now;
+
+    sim.update(dt, graph);
+
+    renderer.render(map, camera);
+    renderer.renderGraph(graph, camera, selectedNodeId);
+    renderer.renderTrains(sim.getTrainPositions(graph), camera);
+
     requestAnimationFrame(loop);
   };
   requestAnimationFrame(loop);

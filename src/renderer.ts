@@ -1,6 +1,7 @@
 import type { Camera } from "./camera.js";
 import type { Graph, GraphEdge, GraphNode } from "./graph.js";
 import type { PathNode } from "./pathfinding.js";
+import type { TrainPosition } from "./simulation.js";
 import type { TileMap } from "./tilemap.js";
 import { NodeKind } from "./graph.js";
 import { Terrain } from "./types.js";
@@ -169,5 +170,24 @@ export class Renderer {
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(node.name, cx, cy);
+  }
+
+  renderTrains(positions: readonly TrainPosition[], camera: Camera): void {
+    const { ctx, canvas } = this;
+    camera.applyTransform(ctx, canvas);
+
+    for (const pos of positions) {
+      const cx = pos.worldX * TILE_SIZE + TILE_SIZE / 2;
+      const cy = pos.worldY * TILE_SIZE + TILE_SIZE / 2;
+      const size = TILE_SIZE * 0.4;
+
+      ctx.fillStyle = "#2050d0";
+      ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 }
