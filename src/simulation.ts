@@ -78,6 +78,7 @@ export interface TrainPosition {
 const DEFAULT_SPEED = 3.0;
 const STATION_WAIT = 2.0;
 const RETRY_WAIT = 0.5;
+const TRANSFER_WAIT = 1.0;
 
 // --- シミュレーション ---
 
@@ -122,13 +123,13 @@ export class Simulation {
     return [...this.routes.values()];
   }
 
-  /** 路線の全停車駅が順にグラフ上で到達可能か検証する */
+  /** 路線の全停車駅が順にグラフ上で到達可能か検証する（転線含む） */
   isRouteValid(stops: readonly number[], graph: Graph): boolean {
     for (let i = 0; i < stops.length - 1; i++) {
       const from = stops[i];
       const to = stops[i + 1];
       if (from === undefined || to === undefined) return false;
-      if (this.bfsFirstEdge(from, to, graph) === undefined) return false;
+      if (!this.isReachable(from, to, graph)) return false;
     }
     return true;
   }
@@ -238,6 +239,13 @@ export class Simulation {
     return this.blocks.getNodeTrainCount(nodeId);
   }
 
+  hasTrainsOnEdge(edgeId: number): boolean {
+    for (const train of this.trains.values()) {
+      if (train.state === TrainState.OnEdge && train.edgeId === edgeId) return true;
+    }
+    return false;
+  }
+
   getRouteTrainCount(routeId: number): number {
     let count = 0;
     for (const train of this.trains.values()) {
@@ -254,6 +262,9 @@ export class Simulation {
 
   /** 列車がノードに到着した時に呼び出されるコールバック */
   onTrainArrive: ((train: Train, nodeId: number) => void) | null = null;
+
+  /** 列車が経路を見つけられなかった時に呼び出されるコールバック */
+  onRouteBlocked: ((train: Train) => void) | null = null;
 
   update(dt: number, graph: Graph): void {
     // フェーズ1: ノード待機中の列車の出発判定（エッジ上の列車より先に処理）
@@ -285,38 +296,70 @@ export class Simulation {
   // --- ノード滞在中 ---
 
   /**
-   * ノード滞在中の列車: 次の閉塞区間（エッジ）が空いていれば出発する。
+   * ノード滞在中の列車: 次のステップ（エッジ or 転線）を試みる。
    */
   private updateAtNode(train: Train, dt: number, graph: Graph): void {
     train.waitTime -= dt;
     if (train.waitTime > 0) return;
 
-    // 次のエッジ（閉塞区間）を探す
-    const targetEdge = this.findEdgeToNextStop(train, graph);
-    if (targetEdge === undefined) {
+    const step = this.findNextStep(train, graph);
+    if (step === undefined) {
+      // 目的地に既にいる場合は正常（advanceRouteで進む）
+      const route = this.routes.get(train.routeId);
+      const target = route?.stops[train.routeStopIndex];
+      if (target !== undefined && target !== train.nodeId) {
+        // 経路が見つからない → コールバック通知
+        this.onRouteBlocked?.(train);
+      }
       train.waitTime = RETRY_WAIT;
       return;
     }
 
-    // 出発を試みる
-    const goForward = targetEdge.fromId === train.nodeId;
-    const startSection = goForward ? 0 : getSectionCount(targetEdge) - 1;
-    if (!this.blocks.tryDepart(train.id, train.nodeId, targetEdge.id, startSection, goForward, graph)) {
+    if (step.kind === Simulation.STEP_TRANSFER) {
+      // 隣接駅への転線
+      this.executeTransfer(train, step.targetNodeId, graph);
+      return;
+    }
+
+    // エッジへ出発を試みる
+    this.tryDepartOnEdge(train, step.edge, graph);
+  }
+
+  /** エッジへの出発を試みる */
+  private tryDepartOnEdge(train: Train, edge: GraphEdge, graph: Graph): void {
+    const goForward = edge.fromId === train.nodeId;
+    const startSection = goForward ? 0 : getSectionCount(edge) - 1;
+    if (!this.blocks.tryDepart(train.id, train.nodeId, edge.id, startSection, goForward, graph)) {
       train.waitTime = RETRY_WAIT;
       return;
     }
     train.state = TrainState.OnEdge;
-    train.edgeId = targetEdge.id;
+    train.edgeId = edge.id;
     train.sectionIndex = startSection;
-
-    if (goForward) {
-      train.forward = true;
-      train.pathIndex = 0;
-    } else {
-      train.forward = false;
-      train.pathIndex = targetEdge.path.length - 1;
-    }
+    train.forward = goForward;
+    train.pathIndex = goForward ? 0 : edge.path.length - 1;
     train.progress = 0;
+  }
+
+  /** 隣接駅への転線を実行する。転線コストとして待機時間を発生させる */
+  private executeTransfer(train: Train, targetNodeId: number, graph: Graph): void {
+    this.blocks.dequeueNode(train.nodeId, train.id);
+    this.blocks.enqueueNode(targetNodeId, train.id);
+    train.nodeId = targetNodeId;
+
+    // 路線の停車駅なら停車待機
+    const isRouteStop = this.routes.get(train.routeId)?.stops.includes(targetNodeId) === true;
+    if (isRouteStop) {
+      train.waitTime = STATION_WAIT;
+      if (this.blocks.isInSlot(targetNodeId, train.id, graph)) {
+        this.onTrainArrive?.(train, targetNodeId);
+      }
+      this.advanceRouteIfAtStop(train);
+      return;
+    }
+
+    // 転線コスト: 次フレームの updateAtNode で続行される
+    train.waitTime = TRANSFER_WAIT;
   }
 
   // --- エッジ走行中 ---
@@ -382,7 +425,7 @@ export class Simulation {
 
   /**
    * 閉塞区間の端に到着。キューベースなので常にノードに入る。
-   * 非停車ノードでは即座に次エッジへの乗り換えを試みる。
+   * 非停車ノードでは即座に次ステップ（エッジ or 転線）を試みる。
    */
   private arrive(train: Train, edge: GraphEdge, nodeId: number, graph: Graph): void {
     this.blocks.arrive(train.id, edge.id, train.sectionIndex, train.forward, nodeId);
@@ -394,7 +437,6 @@ export class Simulation {
 
     if (isRouteStop) {
       train.waitTime = STATION_WAIT;
-      // スロット内の場合のみ貨物積み下ろし
       if (this.blocks.isInSlot(nodeId, train.id, graph)) {
         this.onTrainArrive?.(train, nodeId);
       }
@@ -402,26 +444,17 @@ export class Simulation {
       return;
     }
 
-    // 非停車ノード: 即座に次エッジへ乗り換えを試みる
-    const nextEdge = this.findEdgeToNextStop(train, graph);
-    if (nextEdge === undefined) {
+    // 非停車ノード: 即座に次ステップを試みる
+    const nextStep = this.findNextStep(train, graph);
+    if (nextStep === undefined) {
       train.waitTime = RETRY_WAIT;
       return;
     }
 
-    const goForward = nextEdge.fromId === train.nodeId;
-    const startSection = goForward ? 0 : getSectionCount(nextEdge) - 1;
-    if (this.blocks.tryDepart(train.id, train.nodeId, nextEdge.id, startSection, goForward, graph)) {
-      // 即乗り換え成功: OnEdgeのまま継続
-      train.state = TrainState.OnEdge;
-      train.edgeId = nextEdge.id;
-      train.sectionIndex = startSection;
-      train.forward = goForward;
-      train.pathIndex = goForward ? 0 : nextEdge.path.length - 1;
-      train.progress = 0;
+    if (nextStep.kind === Simulation.STEP_TRANSFER) {
+      this.executeTransfer(train, nextStep.targetNodeId, graph);
     } else {
-      // 乗り換え失敗: ノードで待機
-      train.waitTime = RETRY_WAIT;
+      this.tryDepartOnEdge(train, nextStep.edge, graph);
     }
   }
 
@@ -453,69 +486,87 @@ export class Simulation {
     }
   }
 
-  /**
-   * 列車の現在位置から次の停車駅へ接続するエッジを見つける。
-   * 目的の停車駅ノードに向かってグラフを探索する。
-   * fromNodeIdが指定された場合、先読みのためにtrain.nodeIdの代わりに使用する。
-   */
-  private findEdgeToNextStop(
+  /** BFS結果: エッジ経由か隣接駅転線か */
+  private static readonly STEP_EDGE = 0 as const;
+  private static readonly STEP_TRANSFER = 1 as const;
+
+  private findNextStep(
     train: Train,
     graph: Graph,
-    fromNodeId?: number,
-  ): GraphEdge | undefined {
+  ): { kind: 0; edge: GraphEdge } | { kind: 1; targetNodeId: number } | undefined {
     const route = this.routes.get(train.routeId);
     if (route === undefined) return undefined;
 
-    const currentNode = fromNodeId ?? train.nodeId;
     const targetNodeId = route.stops[train.routeStopIndex];
     if (targetNodeId === undefined) return undefined;
-    if (currentNode === targetNodeId) return undefined;
+    if (train.nodeId === targetNodeId) return undefined;
 
-    // BFSでtargetNodeIdへの最短経路の最初のエッジを見つける
-    return this.bfsFirstEdge(currentNode, targetNodeId, graph);
+    return this.bfsFirstStep(train.nodeId, targetNodeId, graph);
   }
 
   /**
-   * BFSでstartからgoalへの経路を探索し、startから出発する最初のエッジを返す。
-   * 到達不可能ならundefinedを返す。
+   * BFSでstartからgoalへの最短経路を探索する。
+   * エッジと隣接駅転線の両方を探索し、startからの最初のステップを返す。
    */
-  private bfsFirstEdge(
+  private bfsFirstStep(
     start: number,
     goal: number,
     graph: Graph,
-  ): GraphEdge | undefined {
-    // cameFrom: nodeId -> { fromNodeId, viaEdge }
-    const cameFrom = new Map<number, { from: number; edge: GraphEdge }>();
+  ): { kind: 0; edge: GraphEdge } | { kind: 1; targetNodeId: number } | undefined {
+    const cameFrom = new Map<number, { from: number; edge: GraphEdge | null }>();
     const queue: number[] = [start];
     const visited = new Set<number>([start]);
+
+    const checkGoal = (neighbor: number): { kind: 0; edge: GraphEdge } | { kind: 1; targetNodeId: number } | undefined => {
+      if (neighbor !== goal) return undefined;
+      // 経路を逆にたどってstartの次のステップを返す
+      let node = goal;
+      for (let step = 0; step < cameFrom.size; step++) {
+        const prev = cameFrom.get(node);
+        if (prev === undefined) return undefined;
+        if (prev.from === start) {
+          if (prev.edge !== null) {
+            return { kind: Simulation.STEP_EDGE, edge: prev.edge };
+          }
+          return { kind: Simulation.STEP_TRANSFER, targetNodeId: node };
+        }
+        node = prev.from;
+      }
+      return undefined;
+    };
 
     while (queue.length > 0) {
       const current = queue.shift();
       if (current === undefined) break;
 
+      // エッジ経由の隣接ノード
       for (const edge of graph.getEdgesFor(current)) {
         const neighbor = edge.fromId === current ? edge.toId : edge.fromId;
         if (visited.has(neighbor)) continue;
         visited.add(neighbor);
         cameFrom.set(neighbor, { from: current, edge });
-
-        if (neighbor === goal) {
-          // 経路を逆にたどってstartの次のエッジを返す
-          let node = goal;
-          for (let step = 0; step < cameFrom.size; step++) {
-            const prev = cameFrom.get(node);
-            if (prev === undefined) return undefined;
-            if (prev.from === start) return prev.edge;
-            node = prev.from;
-          }
-          return undefined;
-        }
-
+        const result = checkGoal(neighbor);
+        if (result !== undefined) return result;
         queue.push(neighbor);
+      }
+
+      // 隣接駅への転線（複合体内の直接隣接のみ）
+      for (const adj of graph.getAdjacentStations(current)) {
+        if (visited.has(adj.id)) continue;
+        visited.add(adj.id);
+        cameFrom.set(adj.id, { from: current, edge: null });
+        const result = checkGoal(adj.id);
+        if (result !== undefined) return result;
+        queue.push(adj.id);
       }
     }
 
     return undefined;
+  }
+
+  /** 路線の全停車駅が順にグラフ上で到達可能か検証する（転線含む） */
+  private isReachable(from: number, to: number, graph: Graph): boolean {
+    return this.bfsFirstStep(from, to, graph) !== undefined;
   }
 
 

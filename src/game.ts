@@ -1,5 +1,6 @@
 import { Camera } from "./camera.js";
 import { BUILDING_TYPE_NAMES, Economy, RESOURCE_NAMES, Resource, generateCities } from "./economy.js";
+import type { GraphNode } from "./graph.js";
 import { Graph, NODE_KIND_NAMES, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
 import { InputHandler } from "./input.js";
 import { findPath } from "./pathfinding.js";
@@ -141,6 +142,8 @@ export class Game {
   private toasts: Toast[] = [];
   private nextToastId = 1;
   private static readonly TOAST_DURATION = 3.0;
+  private hoverTileX: number | null = null;
+  private hoverTileY: number | null = null;
 
   private listeners: GameEventListener[] = [];
   private lastTime = performance.now();
@@ -176,9 +179,22 @@ export class Game {
       train.cargo = newCargo;
     };
 
+    // 経路到達不能の通知（同じ路線の連続通知を抑制する）
+    const notifiedRoutes = new Set<number>();
+    this.sim.onRouteBlocked = (train): void => {
+      if (notifiedRoutes.has(train.routeId)) return;
+      notifiedRoutes.add(train.routeId);
+      const route = this.sim.getRoute(train.routeId);
+      const name = route?.name ?? `Route ${String(train.routeId)}`;
+      this.showToast(`${name}: 経路が到達不能です`);
+      // 一定時間後に再通知可能にする
+      setTimeout(() => { notifiedRoutes.delete(train.routeId); }, 10000);
+    };
+
     new InputHandler(canvas, this.camera, {
       requestRender: (): void => { /* continuous */ },
       onTileClick: (tx: number, ty: number): void => { this.onTileClick(tx, ty); },
+      onTileHover: (tx: number, ty: number): void => { this.hoverTileX = tx; this.hoverTileY = ty; },
       onKeyPress: (key: string): void => { this.onKeyPress(key); },
     });
   }
@@ -390,14 +406,20 @@ export class Game {
         this.camera,
       );
 
-      // ウェイポイント仮表示
-      if (this.selectedNodeId !== null && this.railWaypoints.length > 0) {
+      // ウェイポイント仮表示（A*パスのプレビュー + マウス位置まで延長）
+      if (this.selectedNodeId !== null) {
         const origin = this.graph.getNode(this.selectedNodeId);
         if (origin !== undefined) {
-          this.renderer.renderWaypoints(
-            [{ x: origin.tileX, y: origin.tileY }, ...this.railWaypoints],
-            this.camera,
-          );
+          const points = [
+            { x: origin.tileX, y: origin.tileY },
+            ...this.railWaypoints,
+          ];
+          // マウス位置までの仮パスを追加
+          const hoverPoints = this.hoverTileX !== null && this.hoverTileY !== null
+            ? [...points, { x: this.hoverTileX, y: this.hoverTileY }]
+            : points;
+          const previewPath = this.buildPreviewPath(hoverPoints);
+          this.renderer.renderWaypoints(points, previewPath, this.camera);
         }
       }
 
@@ -407,46 +429,51 @@ export class Game {
   }
 
   /**
-   * デバッグ用ワールド: 固定配置のシンプルなマップ
+   * デバッグ用ワールド
    *
-   *        C(30,10)
-   *       /
-   * A(10,20) --- B(30,20) --- D(50,20)
-   *       \
-   *        E(30,30)
-   */
-  /**
-   * デバッグ用ワールド: 交差しない配置
+   * A(10,20) --- B1(30,20)
+   *              B2(31,20) --- E(50,20)
+   *              （B1-B2 転線）
    *
-   * C(10,10) --- D(30,10)
-   *
-   * A(10,20) --- B(30,20) --- E(50,20)
+   * C(10,40) --- D1(30,40)
+   *              D2(31,40) --- F(50,40) --- G(50,50)
+   *              （D1-D2 転線）
    */
   private setupDebugWorld(): void {
+    // メインライン: A - B複合体 - E
     const a = this.graph.addNode(NodeKind.Station, 10, 20, "A");
-    const b = this.graph.addNode(NodeKind.Station, 30, 20, "B");
-    const e = this.graph.addNode(NodeKind.Station, 50, 20, "E");
-    const c = this.graph.addNode(NodeKind.Station, 10, 10, "C");
-    const d = this.graph.addNode(NodeKind.Station, 30, 10, "D");
+    const b1 = this.graph.addNode(NodeKind.Station, 30, 20, "B #1");
+    const b2 = this.graph.addNode(NodeKind.Station, 30, 21, "B #2"); // B#1の下（垂直）
+    const e = this.graph.addNode(NodeKind.Station, 50, 21, "E");
 
-    this.connectNodes(a.id, b.id);
-    this.connectNodes(b.id, e.id);
-    this.connectNodes(c.id, d.id);
+    this.connectNodes(a.id, b1.id);
+    this.connectNodes(b2.id, e.id);
 
-    // A-E間のShuttle路線 + 列車2台
+    // 支線: C - D複合体 - F - G
+    const c = this.graph.addNode(NodeKind.Station, 10, 40, "C");
+    const d1 = this.graph.addNode(NodeKind.Station, 30, 40, "D #1");
+    const d2 = this.graph.addNode(NodeKind.Station, 30, 41, "D #2"); // D#1の下（垂直）
+    const f = this.graph.addNode(NodeKind.Station, 50, 41, "F");
+    const g = this.graph.addNode(NodeKind.Station, 50, 50, "G");
+
+    this.connectNodes(c.id, d1.id);
+    this.connectNodes(d2.id, f.id);
+    this.connectNodes(f.id, g.id);
+
+    // A-E間: B1→B2 転線経由
     const route1 = this.sim.addRoute([a.id, e.id], RouteMode.Shuttle, "A-E Line");
     this.sim.addTrain(route1.id, this.graph);
     this.sim.addTrain(route1.id, this.graph);
 
-    // C-D間のShuttle路線 + 列車1台
-    const route2 = this.sim.addRoute([c.id, d.id], RouteMode.Shuttle, "C-D Line");
+    // C-G間: D1→D2 転線経由
+    const route2 = this.sim.addRoute([c.id, g.id], RouteMode.Shuttle, "C-G Line");
     this.sim.addTrain(route2.id, this.graph);
 
     this.lastRouteId = route1.id;
 
-    // カメラをBに合わせる
-    this.camera.x = b.tileX * TILE_SIZE;
-    this.camera.y = b.tileY * TILE_SIZE;
+    // カメラをB複合体に合わせる
+    this.camera.x = b1.tileX * TILE_SIZE;
+    this.camera.y = b1.tileY * TILE_SIZE;
   }
 
 
@@ -554,6 +581,20 @@ export class Game {
   }
 
   removeEdge(edgeId: number): void {
+    if (this.sim.hasTrainsOnEdge(edgeId)) {
+      this.showToast("列車が走行中のため削除できません");
+      return;
+    }
+
+    // エッジの両端が路線の停車駅に含まれていれば削除不可
+    const edge = this.graph.getEdge(edgeId);
+    if (edge === undefined) return;
+    const routeNames = this.findRoutesUsingNodes(edge.fromId, edge.toId);
+    if (routeNames !== null) {
+      this.showToast(`${routeNames} で使用中のため削除できません`);
+      return;
+    }
+
     this.graph.removeEdge(edgeId);
     this.notify();
   }
@@ -565,7 +606,48 @@ export class Game {
     this.notify();
   }
 
+  /** 両方のノードを停車駅に含む全路線名を返す。なければ null */
+  private findRoutesUsingNodes(nodeA: number, nodeB: number): string | null {
+    const names: string[] = [];
+    for (const route of this.sim.getAllRoutes()) {
+      if (route.stops.includes(nodeA) && route.stops.includes(nodeB)) {
+        names.push(route.name);
+      }
+    }
+    return names.length > 0 ? names.join(", ") : null;
+  }
+
+  /** 指定ノードを停車駅に含む全路線名を返す。なければ null */
+  private findRoutesUsingNode(nodeId: number): string | null {
+    const names: string[] = [];
+    for (const route of this.sim.getAllRoutes()) {
+      if (route.stops.includes(nodeId)) {
+        names.push(route.name);
+      }
+    }
+    return names.length > 0 ? names.join(", ") : null;
+  }
+
   removeNode(nodeId: number): void {
+    // ノードに列車がいれば削除不可
+    if (this.sim.getNodeTrainCount(nodeId) > 0) {
+      this.showToast("列車が停車中のため削除できません");
+      return;
+    }
+    // 接続エッジ上に列車がいれば削除不可
+    for (const edge of this.graph.getEdgesFor(nodeId)) {
+      if (this.sim.hasTrainsOnEdge(edge.id)) {
+        this.showToast("接続線路に列車が走行中のため削除できません");
+        return;
+      }
+    }
+    // 路線の停車駅なら削除不可
+    const routeNames = this.findRoutesUsingNode(nodeId);
+    if (routeNames !== null) {
+      this.showToast(`${routeNames} の停車駅のため削除できません`);
+      return;
+    }
+
     const result = this.graph.removeNode(nodeId);
     if (result.mergedEdge !== undefined && result.oldEdgeIds !== undefined && result.splitPathIndex !== undefined) {
       this.sim.handleEdgeMerge(result.oldEdgeIds, result.mergedEdge.id, result.splitPathIndex, this.graph);
@@ -668,15 +750,18 @@ export class Game {
         // 既存駅を選択
         this.selectedNodeId = existing.id;
         this.railWaypoints = [];
-      } else if (this.selectedNodeId === existing.id) {
-        // 選択解除
+      } else if (this.selectedNodeId === existing.id && this.railWaypoints.length === 0) {
+        // ウェイポイントなしで同じ駅をクリック → 選択解除
         this.selectedNodeId = null;
         this.railWaypoints = [];
       } else {
+        // 別の駅、またはウェイポイントありで同じ駅 → 接続を試みる
         // 別の既存駅をクリック → ウェイポイント経由で接続
         const error = this.connectNodesViaWaypoints(this.selectedNodeId, existing.id);
         if (error !== null) {
           this.showToast(error);
+          // 失敗時はステートを維持して再試行可能にする
+          return;
         }
         this.selectedNodeId = null;
         this.railWaypoints = [];
@@ -689,20 +774,50 @@ export class Game {
 
       if (this.selectedNodeId !== null) {
         // 駅が選択中 + 空き地クリック → ウェイポイント追加
-        // 直前の地点からのセグメントが非直交で重なるか確認する
-        const prevPoint = this.getLastWaypointOrNode();
-        if (prevPoint !== null) {
-          const segment = findPath(this.map, prevPoint.x, prevPoint.y, tileX, tileY);
-          if (segment !== null && hasNonPerpendicularOverlap(segment, this.graph.getAllEdges())) {
-            this.showToast("既存線路と平行に重ねて敷設できません");
+        const origin = this.graph.getNode(this.selectedNodeId);
+        if (origin === undefined) return;
+
+        // 起点からの全ポイントで仮パスを構築してチェック
+        const allPoints = [
+          { x: origin.tileX, y: origin.tileY },
+          ...this.railWaypoints,
+          { x: tileX, y: tileY },
+        ];
+        const testPath = this.buildPreviewPath(allPoints);
+        if (testPath.length === 0) {
+          this.showToast("経路が見つかりません");
+          return;
+        }
+
+        // 自己交差チェック
+        const seen = new Set<string>();
+        for (const p of testPath) {
+          const key = `${String(p.x)},${String(p.y)}`;
+          if (seen.has(key)) {
+            this.showToast("経路が自己交差しています");
             return;
           }
+          seen.add(key);
         }
+
+        // 既存線路との非直交重なりチェック
+        if (hasNonPerpendicularOverlap(testPath, this.graph.getAllEdges())) {
+          this.showToast("既存線路と平行に重ねて敷設できません");
+          return;
+        }
+
         this.railWaypoints.push({ x: tileX, y: tileY });
       } else {
         // エッジのパス上には駅を建設できない
         if (this.isOnEdgePath(tileX, tileY)) {
           this.showToast("線路上には駅を建設できません");
+          return;
+        }
+
+        // 隣接駅のエッジ方向に対して垂直でなければ建設できない
+        const perpError = this.checkPerpendicularPlacement(tileX, tileY);
+        if (perpError !== null) {
+          this.showToast(perpError);
           return;
         }
 
@@ -715,10 +830,54 @@ export class Game {
   }
 
   private makeNodeInfo(tileX: number, tileY: number): { kind: NodeKind; name: string } {
+    // 隣接する既存駅があれば複合体名 + ホーム番号を付ける
+    const adjacentName = this.findAdjacentComplexName(tileX, tileY);
+    if (adjacentName !== null) {
+      return { kind: NodeKind.Station, name: adjacentName };
+    }
+
     this.stationCount++;
     const cityName = this.findNearestCityName(tileX, tileY);
     const name = cityName ?? `Station ${String(this.stationCount)}`;
     return { kind: NodeKind.Station, name };
+  }
+
+  /**
+   * 隣接する駅の複合体名を基にホーム番号付きの名前を生成する。
+   * 隣接駅がなければ null を返す。
+   */
+  private findAdjacentComplexName(tileX: number, tileY: number): string | null {
+    // 隣接駅を探す（マンハッタン距離1、上下左右のみ）
+    let adjacentNode: GraphNode | undefined;
+    for (const node of this.graph.getAllNodes()) {
+      const dx = Math.abs(node.tileX - tileX);
+      const dy = Math.abs(node.tileY - tileY);
+      if (dx + dy === 1) {
+        adjacentNode = node;
+        break;
+      }
+    }
+    if (adjacentNode === undefined) return null;
+
+    // 複合体の全駅を取得してベース名と次の番号を決定する
+    const complex = this.graph.getStationComplex(adjacentNode.id);
+    const baseName = this.getComplexBaseName(complex);
+    const nextNum = complex.length + 1;
+
+    // 既存駅が1つでまだ#付きでなければ、最初の駅を #1 にリネーム
+    if (complex.length === 1 && complex[0] !== undefined && !complex[0].name.includes("#")) {
+      complex[0].name = `${baseName} #1`;
+    }
+
+    return `${baseName} #${String(nextNum)}`;
+  }
+
+  /** 複合体のベース名を取得する（#以前の部分） */
+  private getComplexBaseName(complex: readonly GraphNode[]): string {
+    const first = complex[0];
+    if (first === undefined) return "Station";
+    const hashIdx = first.name.indexOf(" #");
+    return hashIdx >= 0 ? first.name.slice(0, hashIdx) : first.name;
   }
 
   /** 停車駅名から路線名を自動生成する */
@@ -749,16 +908,65 @@ export class Game {
     return bestName;
   }
 
-  /** ウェイポイントの最後、またはなければ選択中ノードの座標を返す */
-  private getLastWaypointOrNode(): { x: number; y: number } | null {
-    if (this.railWaypoints.length > 0) {
-      return this.railWaypoints[this.railWaypoints.length - 1] ?? null;
+  /** ウェイポイント間のA*パスを結合してプレビュー用パスを生成する */
+  private buildPreviewPath(points: readonly { x: number; y: number }[]): { x: number; y: number }[] {
+    const fullPath: { x: number; y: number }[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const from = points[i];
+      const to = points[i + 1];
+      if (from === undefined || to === undefined) continue;
+      const segment = findPath(this.map, from.x, from.y, to.x, to.y);
+      if (segment === null) return fullPath; // 途中で経路が見つからなければそこまで
+      if (fullPath.length > 0) {
+        fullPath.push(...segment.slice(1));
+      } else {
+        fullPath.push(...segment);
+      }
     }
-    if (this.selectedNodeId !== null) {
-      const node = this.graph.getNode(this.selectedNodeId);
-      if (node !== undefined) return { x: node.tileX, y: node.tileY };
+    return fullPath;
+  }
+
+
+  /** 隣接配置の制約をチェックする。違反時はエラーメッセージを返す */
+  private checkPerpendicularPlacement(tileX: number, tileY: number): string | null {
+    // 隣接する既存駅を収集する
+    const adjacentNodes: { id: number; dx: number; dy: number }[] = [];
+    for (const node of this.graph.getAllNodes()) {
+      const dx = node.tileX - tileX;
+      const dy = node.tileY - tileY;
+      if (Math.abs(dx) + Math.abs(dy) !== 1) continue;
+      adjacentNodes.push({ id: node.id, dx, dy });
     }
-    return null;
+
+    if (adjacentNodes.length === 0) return null;
+
+    if (adjacentNodes.length === 1) {
+      // 1駅隣接: エッジ方向と垂直かチェック
+      const adj = adjacentNodes[0];
+      if (adj !== undefined && !this.graph.isPerpendicularToEdges(adj.id, tileX, tileY)) {
+        return "線路の進行方向には隣接駅を建設できません";
+      }
+      return null;
+    }
+
+    if (adjacentNodes.length === 2) {
+      // 2駅隣接: 反対側にある場合のみ許可（チェーン挿入）
+      const a = adjacentNodes[0];
+      const b = adjacentNodes[1];
+      if (a !== undefined && b !== undefined && a.dx + b.dx === 0 && a.dy + b.dy === 0) {
+        // 両方のエッジ方向と垂直かチェック
+        if (!this.graph.isPerpendicularToEdges(a.id, tileX, tileY)) {
+          return "線路の進行方向には隣接駅を建設できません";
+        }
+        if (!this.graph.isPerpendicularToEdges(b.id, tileX, tileY)) {
+          return "線路の進行方向には隣接駅を建設できません";
+        }
+        return null;
+      }
+      return "L字型に隣接する位置には建設できません";
+    }
+
+    return "複数の駅に同時に隣接する位置には建設できません";
   }
 
   /** 指定タイルが既存エッジのパス上にあるか */
@@ -775,17 +983,27 @@ export class Game {
   private connectNodesViaWaypoints(fromId: number, toId: number): string | null {
     const fromNode = this.graph.getNode(fromId);
     const toNode = this.graph.getNode(toId);
-    if (fromNode === undefined || toNode === undefined) return null;
+    if (fromNode === undefined || toNode === undefined) return "駅が見つかりません";
     if (this.graph.getEdgesBetween(fromId, toId) !== undefined) {
       return "この2駅は既に接続されています";
     }
 
     // 駅は最大2方向まで接続可能
-    if (this.graph.getEdgesFor(fromId).length >= 2) {
-      return `${fromNode.name} は既に2方向接続済みです`;
-    }
-    if (this.graph.getEdgesFor(toId).length >= 2) {
-      return `${toNode.name} は既に2方向接続済みです`;
+    // 自己ループは1つのノードに2方向（出発+到着）を使う
+    const fromEdges = this.graph.getEdgesFor(fromId).length;
+    const toEdges = this.graph.getEdgesFor(toId).length;
+    if (fromId === toId) {
+      // 自己ループ: 2方向必要 → 既存が1本以上あれば超過
+      if (fromEdges >= 1) {
+        return `${fromNode.name} は自己ループに必要な2方向の空きがありません`;
+      }
+    } else {
+      if (fromEdges >= 2) {
+        return `${fromNode.name} は既に2方向接続済みです`;
+      }
+      if (toEdges >= 2) {
+        return `${toNode.name} は既に2方向接続済みです`;
+      }
     }
 
     // ウェイポイントを経由してパスを結合
@@ -810,12 +1028,48 @@ export class Game {
     }
 
     if (fullPath.length >= 2) {
+      // 自己重複チェック（同じタイルを2回通るパスは不正）
+      const seen = new Set<string>();
+      for (const p of fullPath) {
+        const key = `${String(p.x)},${String(p.y)}`;
+        if (seen.has(key)) return "経路が自己交差しています";
+        seen.add(key);
+      }
+
+      // 中間タイルが既存駅を通過していないかチェック（端点は除く）
+      for (let i = 1; i < fullPath.length - 1; i++) {
+        const p = fullPath[i];
+        if (p === undefined) continue;
+        const nodeAtTile = this.graph.getNodeAt(p.x, p.y);
+        if (nodeAtTile !== undefined) {
+          return `経路が ${nodeAtTile.name} を通過しています`;
+        }
+      }
+
       if (hasNonPerpendicularOverlap(fullPath, this.graph.getAllEdges())) {
         return "既存線路と平行に重ねて敷設できません";
       }
+
+      // エッジ方向が隣接駅と平行でないか確認する
+      const p0 = fullPath[0];
+      const p1 = fullPath[1];
+      const pLast = fullPath[fullPath.length - 1];
+      const pPrev = fullPath[fullPath.length - 2];
+      if (p0 !== undefined && p1 !== undefined) {
+        if (!this.graph.isEdgeDirectionValid(fromId, p1.x - p0.x, p1.y - p0.y)) {
+          return `${fromNode.name} の隣接駅と平行な方向には接続できません`;
+        }
+      }
+      if (pLast !== undefined && pPrev !== undefined) {
+        if (!this.graph.isEdgeDirectionValid(toId, pPrev.x - pLast.x, pPrev.y - pLast.y)) {
+          return `${toNode.name} の隣接駅と平行な方向には接続できません`;
+        }
+      }
+
       this.graph.addEdge(fromId, toId, fullPath);
+      return null;
     }
-    return null;
+    return "経路を構築できません";
   }
 
   private connectNodes(fromId: number, toId: number): void {

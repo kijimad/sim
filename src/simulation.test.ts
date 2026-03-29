@@ -1158,3 +1158,111 @@ describe("Edge exclusivity", () => {
     expect(violation).toBe(false);
   });
 });
+
+describe("駅複合体 - 転線", () => {
+  it("隣接駅を経由してBFSが経路を見つける", () => {
+    const graph = new Graph();
+    // A --edge-- B1  B2 --edge-- C
+    // B1とB2は隣接（複合体）
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b1 = graph.addNode(NodeKind.Station, 10, 0, "B1");
+    const b2 = graph.addNode(NodeKind.Station, 11, 0, "B2"); // B1に隣接
+    const c = graph.addNode(NodeKind.Station, 20, 0, "C");
+
+    graph.addEdge(a.id, b1.id, makePath(11, 0));
+    graph.addEdge(b2.id, c.id, makePath(10, 11));
+
+    const sim = new Simulation();
+    // A→Cの路線は転線を経由して到達可能
+    expect(sim.isRouteValid([a.id, c.id], graph)).toBe(true);
+  });
+
+  it("隣接していない駅間は転線できない", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b1 = graph.addNode(NodeKind.Station, 10, 0, "B1");
+    const b2 = graph.addNode(NodeKind.Station, 13, 0, "B2"); // 距離3 → 隣接ではない
+    const c = graph.addNode(NodeKind.Station, 20, 0, "C");
+
+    graph.addEdge(a.id, b1.id, makePath(11, 0));
+    graph.addEdge(b2.id, c.id, makePath(8, 13));
+
+    const sim = new Simulation();
+    expect(sim.isRouteValid([a.id, c.id], graph)).toBe(false);
+  });
+
+  it("列車が転線を使って目的駅に到達する", () => {
+    const graph = new Graph();
+    // A --edge-- B1  B2 --edge-- C
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b1 = graph.addNode(NodeKind.Station, 5, 0, "B1");
+    const b2 = graph.addNode(NodeKind.Station, 6, 0, "B2");
+    const c = graph.addNode(NodeKind.Station, 11, 0, "C");
+
+    graph.addEdge(a.id, b1.id, makePath(6, 0));
+    graph.addEdge(b2.id, c.id, makePath(6, 6));
+
+    const sim = new Simulation();
+    const route = sim.addRoute([a.id, c.id], RouteMode.Shuttle);
+    sim.addTrain(route.id, graph);
+
+    // 列車がCに到達するまでシミュレーション
+    const reached = runUntil(sim, graph, () => {
+      const trains = sim.getAllTrains();
+      return trains.some((t) => t.state === TrainState.AtNode && t.nodeId === c.id);
+    });
+    expect(reached).toBe(true);
+  });
+
+  it("チェーン状の複合体を通過できる", () => {
+    const graph = new Graph();
+    // A --edge-- B1  B2  B3 --edge-- C
+    // B1-B2-B3は連鎖的に隣接
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b1 = graph.addNode(NodeKind.Station, 5, 0, "B1");
+    graph.addNode(NodeKind.Station, 6, 0, "B2");
+    const b3 = graph.addNode(NodeKind.Station, 7, 0, "B3");
+    const c = graph.addNode(NodeKind.Station, 12, 0, "C");
+
+    graph.addEdge(a.id, b1.id, makePath(6, 0));
+    graph.addEdge(b3.id, c.id, makePath(6, 7));
+
+    const sim = new Simulation();
+    expect(sim.isRouteValid([a.id, c.id], graph)).toBe(true);
+
+    const route = sim.addRoute([a.id, c.id], RouteMode.Shuttle);
+    sim.addTrain(route.id, graph);
+
+    const reached = runUntil(sim, graph, () => {
+      return sim.getAllTrains().some((t) => t.state === TrainState.AtNode && t.nodeId === c.id);
+    });
+    expect(reached).toBe(true);
+  });
+
+  it("Shuttle路線で転線経由の往復ができる", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b1 = graph.addNode(NodeKind.Station, 5, 0, "B1");
+    const b2 = graph.addNode(NodeKind.Station, 6, 0, "B2");
+    const c = graph.addNode(NodeKind.Station, 11, 0, "C");
+
+    graph.addEdge(a.id, b1.id, makePath(6, 0));
+    graph.addEdge(b2.id, c.id, makePath(6, 6));
+
+    const sim = new Simulation();
+    const route = sim.addRoute([a.id, c.id], RouteMode.Shuttle);
+    sim.addTrain(route.id, graph);
+
+    // Cに到達
+    const reachedC = runUntil(sim, graph, () => {
+      return sim.getAllTrains().some((t) => t.state === TrainState.AtNode && t.nodeId === c.id);
+    });
+    expect(reachedC).toBe(true);
+
+    // Aに戻る（転線を逆方向に通過）
+    const reachedA = runUntil(sim, graph, () => {
+      return sim.getAllTrains().some((t) => t.state === TrainState.AtNode && t.nodeId === a.id);
+    });
+    expect(reachedA).toBe(true);
+  });
+});

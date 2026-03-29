@@ -95,6 +95,9 @@ export class Renderer {
       this.renderEdge(edge);
     }
 
+    // 駅複合体の転線リンクを描画する（点線）
+    this.renderComplexLinks(graph);
+
     // ノードを上に描画する
     const nodes = graph.getAllNodes();
     for (const node of nodes) {
@@ -112,23 +115,24 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  /** ウェイポイントとそれを繋ぐ仮線を描画する */
+  /** ウェイポイントとA*パスのプレビューを描画する */
   renderWaypoints(
     points: readonly { x: number; y: number }[],
+    previewPath: readonly { x: number; y: number }[],
     camera: Camera,
   ): void {
     if (points.length === 0) return;
     const { ctx, canvas } = this;
     camera.applyTransform(ctx, canvas);
 
-    // 仮線（点線）
-    if (points.length >= 2) {
-      const first = points[0];
+    // A*パスのプレビュー（点線）
+    if (previewPath.length >= 2) {
+      const first = previewPath[0];
       if (first !== undefined) {
         ctx.beginPath();
         ctx.moveTo(first.x * TILE_SIZE + HALF_TILE, first.y * TILE_SIZE + HALF_TILE);
-        for (let i = 1; i < points.length; i++) {
-          const p = points[i];
+        for (let i = 1; i < previewPath.length; i++) {
+          const p = previewPath[i];
           if (p === undefined) continue;
           ctx.lineTo(p.x * TILE_SIZE + HALF_TILE, p.y * TILE_SIZE + HALF_TILE);
         }
@@ -136,6 +140,7 @@ export class Renderer {
         ctx.lineWidth = 3;
         ctx.setLineDash([6, 4]);
         ctx.lineCap = "round";
+        ctx.lineJoin = "round";
         ctx.stroke();
         ctx.setLineDash([]);
       }
@@ -188,6 +193,35 @@ export class Renderer {
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 1;
       ctx.stroke();
+    }
+  }
+
+  /** 駅複合体の転線リンクを点線で描画する */
+  private renderComplexLinks(graph: Graph): void {
+    const { ctx } = this;
+    const drawn = new Set<string>();
+
+    for (const node of graph.getAllNodes()) {
+      for (const adj of graph.getAdjacentStations(node.id)) {
+        // 重複描画を防ぐ
+        const key = `${String(Math.min(node.id, adj.id))}:${String(Math.max(node.id, adj.id))}`;
+        if (drawn.has(key)) continue;
+        drawn.add(key);
+
+        const x1 = node.tileX * TILE_SIZE + HALF_TILE;
+        const y1 = node.tileY * TILE_SIZE + HALF_TILE;
+        const x2 = adj.tileX * TILE_SIZE + HALF_TILE;
+        const y2 = adj.tileY * TILE_SIZE + HALF_TILE;
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = "rgba(100, 200, 255, 0.5)";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
     }
   }
 

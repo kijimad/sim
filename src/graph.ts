@@ -220,6 +220,101 @@ export class Graph {
     return this.nodes.size;
   }
 
+  /** 隣接駅を取得する（マンハッタン距離1、上下左右のみ） */
+  getAdjacentStations(nodeId: number): GraphNode[] {
+    const node = this.nodes.get(nodeId);
+    if (node === undefined) return [];
+    const result: GraphNode[] = [];
+    for (const other of this.nodes.values()) {
+      if (other.id === nodeId) continue;
+      const dx = Math.abs(other.tileX - node.tileX);
+      const dy = Math.abs(other.tileY - node.tileY);
+      if (dx + dy === 1) {
+        result.push(other);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * 駅複合体を取得する（隣接の連鎖で繋がった全駅）。
+   * チェビシェフ距離1以内の隣接関係をBFSでたどり、連結成分を返す。
+   */
+  getStationComplex(nodeId: number): GraphNode[] {
+    const start = this.nodes.get(nodeId);
+    if (start === undefined) return [];
+
+    const visited = new Set<number>([nodeId]);
+    const queue: GraphNode[] = [start];
+    const result: GraphNode[] = [start];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (current === undefined) break;
+      for (const adj of this.getAdjacentStations(current.id)) {
+        if (visited.has(adj.id)) continue;
+        visited.add(adj.id);
+        queue.push(adj);
+        result.push(adj);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * エッジの方向がノードの隣接駅と平行でないか判定する。
+   * 隣接駅がなければ true（制約なし）。
+   * edgeDx, edgeDy はノードから見たエッジの進行方向。
+   */
+  isEdgeDirectionValid(nodeId: number, edgeDx: number, edgeDy: number): boolean {
+    const node = this.nodes.get(nodeId);
+    if (node === undefined) return false;
+
+    for (const adj of this.getAdjacentStations(nodeId)) {
+      const adjDx = adj.tileX - node.tileX;
+      const adjDy = adj.tileY - node.tileY;
+      // 内積が0でなければ平行方向に隣接駅がある
+      if (adjDx * edgeDx + adjDy * edgeDy !== 0) return false;
+    }
+    return true;
+  }
+
+  /**
+   * 指定座標がノードのエッジ方向に対して垂直かどうかを判定する。
+   * エッジがない場合は true（どこでも隣接可能）。
+   */
+  isPerpendicularToEdges(nodeId: number, tileX: number, tileY: number): boolean {
+    const node = this.nodes.get(nodeId);
+    if (node === undefined) return false;
+
+    const edges = this.getEdgesFor(nodeId);
+    if (edges.length === 0) return true;
+
+    const adjDx = tileX - node.tileX;
+    const adjDy = tileY - node.tileY;
+
+    for (const edge of edges) {
+      // ノードから見たエッジの進行方向（パスの最初の1セグメント）
+      let edgeDx: number;
+      let edgeDy: number;
+      if (edge.fromId === nodeId) {
+        const next = edge.path[1];
+        if (next === undefined) continue;
+        edgeDx = next.x - node.tileX;
+        edgeDy = next.y - node.tileY;
+      } else {
+        const prev = edge.path[edge.path.length - 2];
+        if (prev === undefined) continue;
+        edgeDx = prev.x - node.tileX;
+        edgeDy = prev.y - node.tileY;
+      }
+
+      // 内積が0なら垂直
+      if (adjDx * edgeDx + adjDy * edgeDy !== 0) return false;
+    }
+    return true;
+  }
+
   addEdge(fromId: number, toId: number, path: readonly PathNode[]): GraphEdge {
     const from = this.nodes.get(fromId);
     const to = this.nodes.get(toId);

@@ -215,6 +215,160 @@ describe("Graph - findClosestEdgePoint", () => {
   });
 });
 
+describe("Graph - getAdjacentStations / getStationComplex", () => {
+  it("チェビシェフ距離1以内の駅を返す", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 5, 5, "A");
+    const b = graph.addNode(NodeKind.Station, 6, 5, "B"); // 右隣接
+    const c = graph.addNode(NodeKind.Station, 5, 6, "C"); // 下隣接
+    graph.addNode(NodeKind.Station, 6, 6, "D"); // 斜め → 含まない
+    graph.addNode(NodeKind.Station, 8, 5, "E"); // 距離2 → 含まない
+
+    const adj = graph.getAdjacentStations(a.id);
+    const ids = adj.map((n) => n.id);
+    expect(ids).toContain(b.id);
+    expect(ids).toContain(c.id);
+    expect(ids).toHaveLength(2);
+  });
+
+  it("孤立駅の隣接は空", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    graph.addNode(NodeKind.Station, 10, 10, "Far");
+    expect(graph.getAdjacentStations(a.id)).toHaveLength(0);
+  });
+
+  it("連鎖的に隣接した駅を1つの複合体にまとめる", () => {
+    const graph = new Graph();
+    //  B1(5,5) - B2(6,5) - B3(7,5)  (チェーン状)
+    const b1 = graph.addNode(NodeKind.Station, 5, 5, "B1");
+    const b2 = graph.addNode(NodeKind.Station, 6, 5, "B2");
+    const b3 = graph.addNode(NodeKind.Station, 7, 5, "B3");
+    graph.addNode(NodeKind.Station, 20, 20, "Far"); // 別の場所
+
+    const complex = graph.getStationComplex(b1.id);
+    const ids = complex.map((n) => n.id);
+    expect(ids).toContain(b1.id);
+    expect(ids).toContain(b2.id);
+    expect(ids).toContain(b3.id);
+    expect(ids).toHaveLength(3);
+  });
+
+  it("B1からでもB3からでも同じ複合体を返す", () => {
+    const graph = new Graph();
+    const b1 = graph.addNode(NodeKind.Station, 5, 5, "B1");
+    graph.addNode(NodeKind.Station, 6, 5, "B2");
+    const b3 = graph.addNode(NodeKind.Station, 7, 5, "B3");
+
+    const fromB1 = graph.getStationComplex(b1.id).map((n) => n.id).sort();
+    const fromB3 = graph.getStationComplex(b3.id).map((n) => n.id).sort();
+    expect(fromB1).toEqual(fromB3);
+  });
+
+  it("L字型の隣接も1つの複合体になる", () => {
+    const graph = new Graph();
+    // B1(5,5) - B2(6,5)
+    //            B3(6,6)
+    const b1 = graph.addNode(NodeKind.Station, 5, 5, "B1");
+    const b2 = graph.addNode(NodeKind.Station, 6, 5, "B2");
+    const b3 = graph.addNode(NodeKind.Station, 6, 6, "B3");
+
+    const complex = graph.getStationComplex(b1.id);
+    expect(complex).toHaveLength(3);
+    const ids = complex.map((n) => n.id);
+    expect(ids).toContain(b1.id);
+    expect(ids).toContain(b2.id);
+    expect(ids).toContain(b3.id);
+  });
+
+  it("孤立駅の複合体は自分のみ", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const complex = graph.getStationComplex(a.id);
+    expect(complex).toHaveLength(1);
+    expect(complex[0]?.id).toBe(a.id);
+  });
+});
+
+describe("isPerpendicularToEdges - 隣接方向制限", () => {
+  it("エッジの進行方向と平行な隣接を拒否する", () => {
+    const graph = new Graph();
+    // A(0,0) -- B(5,0)  水平エッジ
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 5, 0, "B");
+    graph.addEdge(a.id, b.id, [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 },
+    ]);
+
+    // Bの右(6,0) = エッジと同方向 → 拒否
+    expect(graph.isPerpendicularToEdges(b.id, 6, 0)).toBe(false);
+    // Bの左(4,0) = エッジと逆方向 → 拒否
+    expect(graph.isPerpendicularToEdges(b.id, 4, 0)).toBe(false);
+    // Bの下(5,1) = エッジと垂直 → 許可
+    expect(graph.isPerpendicularToEdges(b.id, 5, 1)).toBe(true);
+    // Bの上(5,-1) = エッジと垂直 → 許可
+    expect(graph.isPerpendicularToEdges(b.id, 5, -1)).toBe(true);
+  });
+
+  it("エッジがない駅はどの方向でも許可する", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 5, 5, "A");
+    expect(graph.isPerpendicularToEdges(a.id, 6, 5)).toBe(true);
+    expect(graph.isPerpendicularToEdges(a.id, 5, 6)).toBe(true);
+  });
+
+  it("垂直エッジに対して水平方向の隣接を許可する", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 0, 5, "B");
+    graph.addEdge(a.id, b.id, [
+      { x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }, { x: 0, y: 4 }, { x: 0, y: 5 },
+    ]);
+
+    // Aの右(1,0) = 垂直エッジに対して水平 → 許可
+    expect(graph.isPerpendicularToEdges(a.id, 1, 0)).toBe(true);
+    // Aの下(0,1) = 垂直エッジと同方向 → 拒否
+    expect(graph.isPerpendicularToEdges(a.id, 0, 1)).toBe(false);
+  });
+});
+
+describe("isEdgeDirectionValid - エッジ方向と隣接駅の制約", () => {
+  it("隣接駅と平行な方向のエッジを拒否する", () => {
+    const graph = new Graph();
+    // A(5,5) と B(6,5) が隣接（水平方向）
+    const a = graph.addNode(NodeKind.Station, 5, 5, "A");
+    graph.addNode(NodeKind.Station, 6, 5, "B");
+
+    // Aから右方向(1,0)のエッジ → Bと平行 → 拒否
+    expect(graph.isEdgeDirectionValid(a.id, 1, 0)).toBe(false);
+    // Aから左方向(-1,0) → Bと平行 → 拒否
+    expect(graph.isEdgeDirectionValid(a.id, -1, 0)).toBe(false);
+    // Aから下方向(0,1) → Bと垂直 → 許可
+    expect(graph.isEdgeDirectionValid(a.id, 0, 1)).toBe(true);
+  });
+
+  it("隣接駅がなければどの方向でも許可する", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 5, 5, "A");
+    graph.addNode(NodeKind.Station, 20, 20, "Far");
+
+    expect(graph.isEdgeDirectionValid(a.id, 1, 0)).toBe(true);
+    expect(graph.isEdgeDirectionValid(a.id, 0, 1)).toBe(true);
+  });
+
+  it("エッジなし + 隣接駅ありの場合でもチェックが効く", () => {
+    const graph = new Graph();
+    // A, B は隣接（垂直方向）。どちらもエッジなし
+    const a = graph.addNode(NodeKind.Station, 5, 5, "A");
+    graph.addNode(NodeKind.Station, 5, 6, "B");
+
+    // Aから下方向(0,1) → Bと平行 → 拒否
+    expect(graph.isEdgeDirectionValid(a.id, 0, 1)).toBe(false);
+    // Aから右方向(1,0) → Bと垂直 → 許可
+    expect(graph.isEdgeDirectionValid(a.id, 1, 0)).toBe(true);
+  });
+});
+
 describe("hasNonPerpendicularOverlap - 交差判定", () => {
   it("平行な重なりを拒否する（同方向）", () => {
     const graph = new Graph();

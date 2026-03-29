@@ -4,6 +4,7 @@ import { TILE_SIZE } from "./renderer.js";
 export interface InputCallbacks {
   readonly requestRender: () => void;
   readonly onTileClick: (tileX: number, tileY: number) => void;
+  readonly onTileHover: (tileX: number, tileY: number) => void;
   readonly onKeyPress: (key: string) => void;
 }
 
@@ -26,16 +27,24 @@ export class InputHandler {
     });
 
     canvas.addEventListener("mousemove", (e: MouseEvent) => {
-      if (!this.dragging) return;
-      const dx = e.clientX - this.lastX;
-      const dy = e.clientY - this.lastY;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-        this.dragMoved = true;
+      if (this.dragging) {
+        const dx = e.clientX - this.lastX;
+        const dy = e.clientY - this.lastY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+          this.dragMoved = true;
+        }
+        this.lastX = e.clientX;
+        this.lastY = e.clientY;
+        camera.pan(dx, dy);
+        callbacks.requestRender();
+      } else {
+        // ホバー: マウス位置のタイル座標を通知
+        const dpr = window.devicePixelRatio;
+        const screenX = e.clientX * dpr;
+        const screenY = e.clientY * dpr;
+        const { wx, wy } = camera.screenToWorld(screenX, screenY, canvas.width, canvas.height);
+        callbacks.onTileHover(Math.floor(wx / TILE_SIZE), Math.floor(wy / TILE_SIZE));
       }
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
-      camera.pan(dx, dy);
-      callbacks.requestRender();
     });
 
     canvas.addEventListener("mouseup", (e: MouseEvent) => {
