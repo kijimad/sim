@@ -1,187 +1,171 @@
 import type { Graph } from "./graph.js";
-import { NodeKind, SignalLayout } from "./graph.js";
-
-/** スポーン時など方向が未定義の場合の値 */
-export const NO_DIRECTION = -1;
+import { sectionKey } from "./graph.js";
 
 /**
- * 閉塞システム: エッジ（閉塞区間）の予約とノード（閉塞境界）の占有を管理する。
+ * キューベースの閉塞システム（複線専用）。
  *
- * 不変条件:
- * - エッジの占有数はエッジの容量を超えない（現在はデフォルト1、将来的に複線対応）
- * - ノードの占有数はノードの容量を超えない
- * - 信号場のレイアウトに応じた方向制約が守られる
+ * ノード・エッジ（セクション）は全てキュー。
+ * 列車は拒否されず必ずキューに入る。
+ * 容量 = 同時に出発/通行できる列車数。
  */
 export class BlockSystem {
-  /** エッジの容量（デフォルト1。複線化で2にする） */
-  private edgeCapacity = new Map<number, number>();
-  private readonly defaultEdgeCapacity = 1;
-  /** edgeId -> Set<trainId> */
-  private edgeOccupants = new Map<number, Set<number>>();
-  /** nodeId -> Map<trainId, fromEdgeId> */
-  private nodeOccupants = new Map<number, Map<number, number>>();
+  /** sectionKey -> trainId[]（先頭が最も前） */
+  private sectionQueues = new Map<string, number[]>();
+  /** nodeId -> trainId[]（先頭がスロット内、後方が待機列） */
+  private nodeQueues = new Map<number, number[]>();
 
-  // --- クエリ ---
+  // --- ノード ---
 
-  setEdgeCapacity(edgeId: number, capacity: number): void {
-    this.edgeCapacity.set(edgeId, capacity);
-  }
-
-  getEdgeCapacity(edgeId: number): number {
-    return this.edgeCapacity.get(edgeId) ?? this.defaultEdgeCapacity;
-  }
-
-  isEdgeFree(edgeId: number, excludeTrainId?: number): boolean {
-    const occupants = this.edgeOccupants.get(edgeId);
-    if (occupants === undefined || occupants.size === 0) return true;
-    const cap = this.getEdgeCapacity(edgeId);
-    if (excludeTrainId !== undefined && occupants.has(excludeTrainId)) {
-      return occupants.size - 1 < cap;
+  /** ノードキューに列車を追加（常に成功） */
+  enqueueNode(nodeId: number, trainId: number): void {
+    let q = this.nodeQueues.get(nodeId);
+    if (q === undefined) {
+      q = [];
+      this.nodeQueues.set(nodeId, q);
     }
-    return occupants.size < cap;
+    q.push(trainId);
   }
 
-  canEnterNode(nodeId: number, fromEdgeId: number, graph: Graph): boolean {
+  /** ノードキューから列車を除去 */
+  dequeueNode(nodeId: number, trainId: number): void {
+    const q = this.nodeQueues.get(nodeId);
+    if (q === undefined) return;
+    const idx = q.indexOf(trainId);
+    if (idx !== -1) q.splice(idx, 1);
+  }
+
+  /** 列車がノードのスロット内にいるか（出発可能か） */
+  isInSlot(nodeId: number, trainId: number, graph: Graph): boolean {
     const node = graph.getNode(nodeId);
     if (node === undefined) return false;
+    const q = this.nodeQueues.get(nodeId);
+    if (q === undefined) return false;
+    const idx = q.indexOf(trainId);
+    return idx >= 0 && idx < node.capacity;
+  }
 
-    const occupants = this.nodeOccupants.get(nodeId);
-    const totalOccupancy = occupants?.size ?? 0;
-    if (totalOccupancy === 0) return true;
-    if (totalOccupancy >= node.capacity) return false;
-
-    // 容量1: 総容量のみ確認（上のチェックで済み）
-    if (node.capacity <= 1) return true;
-
-    // 容量2以上: 方向別閉塞
-    // ここに到達するのは totalOccupancy < capacity の場合のみ。
-    // 容量チェックだけで十分安全。方向制約は信号場のみ適用。
-    if (occupants !== undefined && node.kind === NodeKind.SignalStation) {
-      if (node.signalLayout === SignalLayout.Overtaking) {
-        for (const arrivedFrom of occupants.values()) {
-          if (arrivedFrom !== fromEdgeId && arrivedFrom !== NO_DIRECTION) return false;
-        }
-        return true;
-      }
-
-      // Passing: 方向ごとに1台
-      for (const arrivedFrom of occupants.values()) {
-        if (arrivedFrom === fromEdgeId && fromEdgeId !== NO_DIRECTION) return false;
-      }
-    }
-    return true;
+  /** キュー内での列車の位置（0が先頭） */
+  getQueuePosition(nodeId: number, trainId: number): number {
+    const q = this.nodeQueues.get(nodeId);
+    if (q === undefined) return 0;
+    const idx = q.indexOf(trainId);
+    return idx >= 0 ? idx : 0;
   }
 
   getNodeTrainCount(nodeId: number): number {
-    return this.nodeOccupants.get(nodeId)?.size ?? 0;
+    return this.nodeQueues.get(nodeId)?.length ?? 0;
   }
 
-  // --- 操作 ---
-
-  /**
-   * 列車がノードからエッジへ出発する。
-   * 出発元ノードから離れ、到着先ノードにスロットを予約し、エッジに乗る。
-   * 失敗した場合は何も変更しない。
-   */
-  tryDepart(trainId: number, nodeId: number, edgeId: number, destNodeId: number, graph: Graph): boolean {
-    if (!this.isEdgeFree(edgeId, trainId)) return false;
-    if (!this.canEnterNode(destNodeId, edgeId, graph)) return false;
-
-    // アトミックに実行: 出発元解放 + エッジ占有 + 到着先スロット予約
-    this.removeFromNode(nodeId, trainId);
-    this.addToEdge(edgeId, trainId);
-    this.addToNode(destNodeId, trainId, edgeId);
-    return true;
+  getNodeSlotCount(nodeId: number, graph: Graph): number {
+    const node = graph.getNode(nodeId);
+    if (node === undefined) return 0;
+    const q = this.nodeQueues.get(nodeId);
+    if (q === undefined) return 0;
+    return Math.min(q.length, node.capacity);
   }
 
-  /**
-   * 列車がエッジからノードへ到着する。
-   * tryDepartで既にノードにスロット予約済みなので、エッジ解放のみ行う。
-   * スロット予約がなければ通常のcanEnterNodeチェックを行う。
-   */
-  tryArrive(trainId: number, edgeId: number, nodeId: number, graph: Graph): boolean {
-    // tryDepartで既に予約済みか確認
-    const occupants = this.nodeOccupants.get(nodeId);
-    const alreadyReserved = occupants?.has(trainId) === true;
+  getNodeWaitCount(nodeId: number, graph: Graph): number {
+    const node = graph.getNode(nodeId);
+    if (node === undefined) return 0;
+    const q = this.nodeQueues.get(nodeId);
+    if (q === undefined) return 0;
+    return Math.max(0, q.length - node.capacity);
+  }
 
-    if (!alreadyReserved) {
-      // 予約なし（異常ケースだが安全策）
-      if (!this.canEnterNode(nodeId, edgeId, graph)) return false;
-      this.addToNode(nodeId, trainId, edgeId);
+  // --- セクション ---
+
+  /** セクションキューに列車を追加（常に成功） */
+  enqueueSection(edgeId: number, section: number, forward: boolean, trainId: number): void {
+    const key = sectionKey(edgeId, section, forward);
+    let q = this.sectionQueues.get(key);
+    if (q === undefined) {
+      q = [];
+      this.sectionQueues.set(key, q);
     }
+    q.push(trainId);
+  }
 
-    this.removeFromEdge(edgeId, trainId);
+  /** セクションキューから列車を除去 */
+  dequeueSection(edgeId: number, section: number, forward: boolean, trainId: number): void {
+    const key = sectionKey(edgeId, section, forward);
+    const q = this.sectionQueues.get(key);
+    if (q === undefined) return;
+    const idx = q.indexOf(trainId);
+    if (idx !== -1) q.splice(idx, 1);
+  }
+
+  /** セクションが通行可能か（先頭1台のみ通行可能） */
+  canMoveInSection(edgeId: number, section: number, forward: boolean, trainId: number): boolean {
+    const key = sectionKey(edgeId, section, forward);
+    const q = this.sectionQueues.get(key);
+    if (q === undefined || q.length === 0) return true;
+    return q[0] === trainId;
+  }
+
+  /** セクションが空いているか（新しい列車が入れるか） */
+  isSectionEmpty(edgeId: number, section: number, forward: boolean): boolean {
+    const key = sectionKey(edgeId, section, forward);
+    const q = this.sectionQueues.get(key);
+    return q === undefined || q.length === 0;
+  }
+
+  // --- 遷移操作 ---
+
+  /** ノード → セクションへ出発。スロット内かつセクション空きなら成功 */
+  tryDepart(trainId: number, nodeId: number, edgeId: number, section: number, forward: boolean, graph: Graph): boolean {
+    if (!this.isInSlot(nodeId, trainId, graph)) return false;
+    if (!this.isSectionEmpty(edgeId, section, forward)) return false;
+
+    this.dequeueNode(nodeId, trainId);
+    this.enqueueSection(edgeId, section, forward, trainId);
     return true;
   }
 
-  /** スポーン時にノードに配置する */
-  placeAtNode(nodeId: number, trainId: number): void {
-    this.addToNode(nodeId, trainId, NO_DIRECTION);
+  /** セクション → ノードへ到着。常に成功（キューなので拒否しない） */
+  arrive(trainId: number, edgeId: number, section: number, forward: boolean, nodeId: number): void {
+    this.dequeueSection(edgeId, section, forward, trainId);
+    this.enqueueNode(nodeId, trainId);
   }
 
-  /** 列車を完全に削除する。OnEdge状態ではエッジと到着先ノード両方を解放する */
-  removeTrain(trainId: number, isAtNode: boolean, nodeId: number, edgeId: number): void {
+  /** セクション間移動。次セクションが空なら成功 */
+  tryAdvanceSection(trainId: number, edgeId: number, fromSection: number, toSection: number, forward: boolean): boolean {
+    if (!this.isSectionEmpty(edgeId, toSection, forward)) return false;
+
+    this.dequeueSection(edgeId, fromSection, forward, trainId);
+    this.enqueueSection(edgeId, toSection, forward, trainId);
+    return true;
+  }
+
+  /** スポーン */
+  placeAtNode(nodeId: number, trainId: number): void {
+    this.enqueueNode(nodeId, trainId);
+  }
+
+  /** 列車を削除 */
+  removeTrain(trainId: number, isAtNode: boolean, nodeId: number, edgeId: number, section: number, forward: boolean): void {
     if (isAtNode) {
-      this.removeFromNode(nodeId, trainId);
+      this.dequeueNode(nodeId, trainId);
     } else {
-      this.removeFromEdge(edgeId, trainId);
-      // OnEdge時は到着先ノードにもoccupantsとして入っている
-      // 全ノードから削除する（どのノードに予約されているかわからないため）
-      for (const [, occupants] of this.nodeOccupants) {
-        occupants.delete(trainId);
-      }
+      this.dequeueSection(edgeId, section, forward, trainId);
     }
   }
 
   // --- 不変条件チェック ---
 
-  checkInvariants(graph: Graph): void {
-    // 1. エッジ容量を超えていないこと
-    for (const [edgeId, occupants] of this.edgeOccupants) {
-      const cap = this.getEdgeCapacity(edgeId);
-      if (occupants.size > cap) {
-        throw new Error(
-          `閉塞違反: エッジ${String(edgeId)}(容量${String(cap)})に${String(occupants.size)}台`,
-        );
+  checkInvariants(): void {
+    // セクション: 各セクションに1台以下
+    for (const [key, q] of this.sectionQueues) {
+      if (q.length > 1) {
+        throw new Error(`閉塞違反: セクション${key}に${String(q.length)}台`);
       }
     }
 
-    // 2. ノード容量を超えていないこと
-    for (const [nodeId, occupants] of this.nodeOccupants) {
-      const node = graph.getNode(nodeId);
-      if (node !== undefined && occupants.size > node.capacity) {
-        throw new Error(
-          `容量違反: ノード${String(nodeId)}(容量${String(node.capacity)})に${String(occupants.size)}台`,
-        );
+    // ノード: 重複なし
+    for (const [nodeId, q] of this.nodeQueues) {
+      const unique = new Set(q);
+      if (unique.size !== q.length) {
+        throw new Error(`重複違反: ノード${String(nodeId)}に同一列車が複数回`);
       }
     }
-  }
-
-  // --- 内部 ---
-
-  private addToNode(nodeId: number, trainId: number, fromEdgeId: number): void {
-    let map = this.nodeOccupants.get(nodeId);
-    if (map === undefined) {
-      map = new Map();
-      this.nodeOccupants.set(nodeId, map);
-    }
-    map.set(trainId, fromEdgeId);
-  }
-
-  private removeFromNode(nodeId: number, trainId: number): void {
-    this.nodeOccupants.get(nodeId)?.delete(trainId);
-  }
-
-  private addToEdge(edgeId: number, trainId: number): void {
-    let set = this.edgeOccupants.get(edgeId);
-    if (set === undefined) {
-      set = new Set();
-      this.edgeOccupants.set(edgeId, set);
-    }
-    set.add(trainId);
-  }
-
-  private removeFromEdge(edgeId: number, trainId: number): void {
-    this.edgeOccupants.get(edgeId)?.delete(trainId);
   }
 }

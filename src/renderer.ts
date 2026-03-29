@@ -2,8 +2,8 @@ import type { Camera } from "./camera.js";
 import type { Graph, GraphEdge, GraphNode } from "./graph.js";
 import type { PathNode } from "./pathfinding.js";
 import type { TrainPosition } from "./simulation.js";
+import { getSignalPositions } from "./graph.js";
 import type { TileMap } from "./tilemap.js";
-import { NodeKind } from "./graph.js";
 import { Terrain } from "./types.js";
 
 export const TILE_SIZE = 32;
@@ -85,7 +85,6 @@ export class Renderer {
     camera: Camera,
     selectedNodeId: number | null,
     nodeInfo?: (nodeId: number) => { trainCount: number; waitingCargo: number },
-    edgeCapacity?: (edgeId: number) => number,
   ): void {
     const { ctx, canvas } = this;
     camera.applyTransform(ctx, canvas);
@@ -93,8 +92,7 @@ export class Renderer {
     // エッジを先に描画する（ノードの下に）
     const edges = graph.getAllEdges();
     for (const edge of edges) {
-      const cap = edgeCapacity !== undefined ? edgeCapacity(edge.id) : 1;
-      this.renderEdge(edge, cap);
+      this.renderEdge(edge);
     }
 
     // ノードを上に描画する
@@ -114,18 +112,28 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
-  private renderEdge(edge: GraphEdge, capacity: number): void {
-    if (capacity >= 2) {
-      // 複線: 2本の線を平行に描画
-      const offset = 3;
-      this.drawOffsetPath(edge.path, "#333333", 4, offset);
-      this.drawOffsetPath(edge.path, "#333333", 4, -offset);
-      this.drawOffsetPath(edge.path, "#aaaaaa", 2, offset);
-      this.drawOffsetPath(edge.path, "#aaaaaa", 2, -offset);
-    } else {
-      // 単線
-      this.drawPath(edge.path, "#333333", 6);
-      this.drawPath(edge.path, "#888888", 3);
+  private renderEdge(edge: GraphEdge): void {
+    // 常に複線として描画する
+    const offset = 3;
+    this.drawOffsetPath(edge.path, "#333333", 4, offset);
+    this.drawOffsetPath(edge.path, "#333333", 4, -offset);
+    this.drawOffsetPath(edge.path, "#aaaaaa", 2, offset);
+    this.drawOffsetPath(edge.path, "#aaaaaa", 2, -offset);
+
+    // エッジ内信号マーカーを描画
+    const { ctx } = this;
+    for (const sigIdx of getSignalPositions(edge)) {
+      const p = edge.path[sigIdx];
+      if (p === undefined) continue;
+      const sx = p.x * TILE_SIZE + HALF_TILE;
+      const sy = p.y * TILE_SIZE + HALF_TILE;
+      ctx.beginPath();
+      ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+      ctx.fillStyle = "#40d040";
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1;
+      ctx.stroke();
     }
   }
 
@@ -227,17 +235,7 @@ export class Renderer {
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI * 2);
 
-    switch (node.kind) {
-      case NodeKind.Station:
-        ctx.fillStyle = selected ? "#ff6060" : "#e03030";
-        break;
-      case NodeKind.SignalStation:
-        ctx.fillStyle = "#e0a030";
-        break;
-      case NodeKind.Signal:
-        ctx.fillStyle = "#3080e0";
-        break;
-    }
+    ctx.fillStyle = selected ? "#ff6060" : "#e03030";
 
     ctx.fill();
     ctx.strokeStyle = selected ? "#ffff00" : "#ffffff";
@@ -294,9 +292,8 @@ export class Renderer {
       let cx = pos.worldX * TILE_SIZE + HALF_TILE;
       let cy = pos.worldY * TILE_SIZE + HALF_TILE;
 
-      // 複線の場合、進行方向に対して右側にオフセット
-      if (pos.edgeCapacity >= 2 && (pos.dirX !== 0 || pos.dirY !== 0)) {
-        // 右側 = 進行方向の法線（右手系: -dy, dx が左、dy, -dx が右）
+      // 複線: 進行方向に対して右側にオフセット
+      if (pos.dirX !== 0 || pos.dirY !== 0) {
         const offsetDist = 3;
         cx += pos.dirY * offsetDist;
         cy += -pos.dirX * offsetDist;
@@ -304,10 +301,16 @@ export class Renderer {
 
       const size = TILE_SIZE * 0.4;
 
-      // 列車の色：空なら青、貨物積載中ならオレンジ
-      ctx.fillStyle = pos.cargoTotal > 0 ? "#d08020" : "#2050d0";
+      // 列車の色: 待機列は灰色、貨物積載中はオレンジ、空は青
+      if (!pos.inSlot) {
+        ctx.fillStyle = "#606060";
+      } else if (pos.cargoTotal > 0) {
+        ctx.fillStyle = "#d08020";
+      } else {
+        ctx.fillStyle = "#2050d0";
+      }
       ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
-      ctx.strokeStyle = "#ffffff";
+      ctx.strokeStyle = pos.inSlot ? "#ffffff" : "#999999";
       ctx.lineWidth = 1.5;
       ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
 

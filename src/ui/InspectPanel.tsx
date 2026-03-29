@@ -62,25 +62,6 @@ function EdgeInfo({ info, game }: { info: InspectInfo; game: Game }) {
         <span className="inspect-label">Length</span>
         <span>{info.edgeLength} tiles</span>
       </div>
-      <div className="inspect-row">
-        <span className="inspect-label">Tracks</span>
-        <span className="capacity-control">
-          <button
-            className="cap-btn"
-            disabled={(info.edgeCapacity ?? 1) <= 1}
-            onClick={() => { game.setEdgeCapacity(edgeId, (info.edgeCapacity ?? 1) - 1); }}
-          >
-            -
-          </button>
-          <span>{info.edgeCapacity ?? 1}</span>
-          <button
-            className="cap-btn"
-            onClick={() => { game.setEdgeCapacity(edgeId, (info.edgeCapacity ?? 1) + 1); }}
-          >
-            +
-          </button>
-        </span>
-      </div>
       <button
         className="danger-btn"
         onClick={() => { game.removeEdge(edgeId); }}
@@ -174,10 +155,10 @@ export function InspectPanel({ info, game }: InspectPanelProps) {
                 </button>
               </span>
             </div>
-            {info.nodeLayout !== undefined && (
+            {(info.nodeTrainsWaiting ?? 0) > 0 && (
               <div className="inspect-row">
-                <span className="inspect-label">Layout</span>
-                <span>{info.nodeLayout}</span>
+                <span className="inspect-label">Queue</span>
+                <span>{info.nodeTrainsWaiting} waiting</span>
               </div>
             )}
             {info.waitingDetail !== undefined && info.waitingDetail.length > 0 && (

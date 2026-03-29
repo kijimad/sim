@@ -2,39 +2,16 @@ import type { PathNode } from "./pathfinding.js";
 
 export const NodeKind = {
   Station: 0,
-  SignalStation: 1,
-  Signal: 2,
 } as const;
 
 export type NodeKind = (typeof NodeKind)[keyof typeof NodeKind];
 
 const DEFAULT_CAPACITY: Record<NodeKind, number> = {
   [NodeKind.Station]: 2,
-  [NodeKind.SignalStation]: 2,
-  [NodeKind.Signal]: 1,
 };
-
-/**
- * 信号場の線路配置。
- * - passing: 方向ごとに1線路（対向列車がすれ違い可能）
- * - overtaking: 同方向に2線路（後続列車が待機可能）
- */
-export const SignalLayout = {
-  Passing: 0,
-  Overtaking: 1,
-} as const;
-
-export type SignalLayout = (typeof SignalLayout)[keyof typeof SignalLayout];
 
 export const NODE_KIND_NAMES: Record<NodeKind, string> = {
   [NodeKind.Station]: "Station",
-  [NodeKind.SignalStation]: "Signal Station",
-  [NodeKind.Signal]: "Signal",
-};
-
-export const SIGNAL_LAYOUT_NAMES: Record<SignalLayout, string> = {
-  [SignalLayout.Passing]: "Passing",
-  [SignalLayout.Overtaking]: "Overtaking",
 };
 
 export interface GraphNode {
@@ -44,7 +21,6 @@ export interface GraphNode {
   readonly tileY: number;
   name: string;
   capacity: number;
-  readonly signalLayout: SignalLayout;
 }
 
 export interface GraphEdge {
@@ -53,6 +29,50 @@ export interface GraphEdge {
   readonly toId: number;
   /** 始点ノードから終点ノードまでのタイルパス（両端を含む） */
   readonly path: readonly PathNode[];
+}
+
+/** 閉塞区間の間隔（タイル数） */
+const SIGNAL_INTERVAL = 10;
+
+/** セクションID用のキー文字列（方向別） */
+export function sectionKey(edgeId: number, section: number, forward: boolean): string {
+  return `${String(edgeId)}:${String(section)}:${forward ? "f" : "b"}`;
+}
+
+/**
+ * エッジ内のセクション数とセクション境界位置を計算する。
+ * 短すぎるセクション（SIGNAL_INTERVAL/2未満）は前のセクションに統合する。
+ */
+function computeSignalPositions(pathLength: number): number[] {
+  const positions: number[] = [];
+  for (let i = SIGNAL_INTERVAL; i < pathLength - 1; i += SIGNAL_INTERVAL) {
+    // 最後のセクションが短すぎないか確認
+    const remaining = pathLength - 1 - i;
+    if (remaining >= SIGNAL_INTERVAL / 2) {
+      positions.push(i);
+    }
+  }
+  return positions;
+}
+
+/** エッジ内のセクション数 */
+export function getSectionCount(edge: GraphEdge): number {
+  return computeSignalPositions(edge.path.length).length + 1;
+}
+
+/** パスインデックスが属するセクションインデックスを返す */
+export function getSectionAt(edge: GraphEdge, pathIndex: number): number {
+  const positions = computeSignalPositions(edge.path.length);
+  for (let i = 0; i < positions.length; i++) {
+    const pos = positions[i];
+    if (pos !== undefined && pathIndex < pos) return i;
+  }
+  return positions.length;
+}
+
+/** セクション境界のパスインデックスリストを返す（描画用） */
+export function getSignalPositions(edge: GraphEdge): number[] {
+  return computeSignalPositions(edge.path.length);
 }
 
 export class Graph {
@@ -66,18 +86,21 @@ export class Graph {
     tileY: number,
     name: string,
     capacity?: number,
-    signalLayout?: SignalLayout,
   ): GraphNode {
     const id = this.nextId++;
     const cap = capacity ?? DEFAULT_CAPACITY[kind];
-    const layout = signalLayout ?? SignalLayout.Passing;
-    const node: GraphNode = { id, kind, tileX, tileY, name, capacity: cap, signalLayout: layout };
+    const node: GraphNode = { id, kind, tileX, tileY, name, capacity: cap };
     this.nodes.set(id, node);
     return node;
   }
 
-  removeNode(id: number): boolean {
-    // 接続エッジを収集
+  /** ノード削除。エッジ2本の場合は結合する */
+  removeNode(id: number): {
+    deleted: boolean;
+    mergedEdge?: GraphEdge | undefined;
+    oldEdgeIds?: [number, number] | undefined;
+    splitPathIndex?: number | undefined;
+  } {
     const connectedEdges: GraphEdge[] = [];
     for (const edge of this.edges.values()) {
       if (edge.fromId === id || edge.toId === id) {
@@ -85,33 +108,36 @@ export class Graph {
       }
     }
 
-    // エッジが2本の場合、前後のノードを直接接続し直す（パスを結合）
+    let mergedEdge: GraphEdge | undefined;
+    let oldEdgeIds: [number, number] | undefined;
+    let splitPathIndex: number | undefined;
+
     if (connectedEdges.length === 2) {
       const e1 = connectedEdges[0];
       const e2 = connectedEdges[1];
       if (e1 !== undefined && e2 !== undefined) {
-        // e1の相手ノードとe2の相手ノードを特定
         const other1 = e1.fromId === id ? e1.toId : e1.fromId;
         const other2 = e2.fromId === id ? e2.toId : e2.fromId;
 
-        // パスを結合: e1のパス(other1→id) + e2のパス(id→other2)
         const path1 = e1.toId === id ? [...e1.path] : [...e1.path].reverse();
         const path2 = e2.fromId === id ? e2.path.slice(1) : [...e2.path].reverse().slice(1);
         const mergedPath = [...path1, ...path2];
 
-        // 古いエッジを削除して新しいエッジを作成
+        oldEdgeIds = [e1.id, e2.id];
+        splitPathIndex = path1.length - 1;
+
         this.edges.delete(e1.id);
         this.edges.delete(e2.id);
-        this.addEdge(other1, other2, mergedPath);
+        mergedEdge = this.addEdge(other1, other2, mergedPath);
       }
     } else {
-      // 2本以外: エッジを単純に削除
       for (const edge of connectedEdges) {
         this.edges.delete(edge.id);
       }
     }
 
-    return this.nodes.delete(id);
+    const deleted = this.nodes.delete(id);
+    return { deleted, mergedEdge, oldEdgeIds, splitPathIndex };
   }
 
   getNode(id: number): GraphNode | undefined {
@@ -185,11 +211,6 @@ export class Graph {
     return this.edges.size;
   }
 
-  /**
-   * 指定されたパスインデックスにノードを挿入してエッジを分割する。
-   * 元のエッジは削除され、2つの新しいエッジに置き換えられる。
-   * 新しいノードと2つの新しいエッジを返す。無効な場合はnullを返す。
-   */
   splitEdge(
     edgeId: number,
     node: GraphNode,
@@ -210,10 +231,6 @@ export class Graph {
     return { edge1, edge2 };
   }
 
-  /**
-   * タイル座標に最も近いエッジ上のパスポイントを見つける。
-   * エッジ、パスインデックス、距離を返す。見つからない場合はnullを返す。
-   */
   findClosestEdgePoint(
     tileX: number,
     tileY: number,

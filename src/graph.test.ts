@@ -38,21 +38,21 @@ describe("Graph - Nodes", () => {
   it("removes a node", () => {
     const graph = new Graph();
     const node = graph.addNode(NodeKind.Station, 0, 0, "A");
-    expect(graph.removeNode(node.id)).toBe(true);
+    expect(graph.removeNode(node.id).deleted).toBe(true);
     expect(graph.getNode(node.id)).toBeUndefined();
     expect(graph.nodeCount).toBe(0);
   });
 
   it("removeNode returns false for unknown id", () => {
     const graph = new Graph();
-    expect(graph.removeNode(999)).toBe(false);
+    expect(graph.removeNode(999).deleted).toBe(false);
   });
 
   it("getAllNodes returns all nodes", () => {
     const graph = new Graph();
     graph.addNode(NodeKind.Station, 0, 0, "A");
-    graph.addNode(NodeKind.SignalStation, 1, 1, "B");
-    graph.addNode(NodeKind.Signal, 2, 2, "C");
+    graph.addNode(NodeKind.Station, 1, 1, "B");
+    graph.addNode(NodeKind.Station, 2, 2, "C");
     expect(graph.getAllNodes()).toHaveLength(3);
   });
 
@@ -141,7 +141,7 @@ describe("Graph - splitEdge", () => {
     const path = Array.from({ length: 6 }, (_, i) => ({ x: i, y: 0 }));
     const edge = graph.addEdge(a.id, b.id, path);
 
-    const s = graph.addNode(NodeKind.SignalStation, 3, 0, "S");
+    const s = graph.addNode(NodeKind.Station, 3, 0, "S");
     const result = graph.splitEdge(edge.id, s, 3);
 
     expect(result).not.toBeNull();
@@ -172,7 +172,7 @@ describe("Graph - splitEdge", () => {
     const b = graph.addNode(NodeKind.Station, 2, 0, "B");
     const path = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }];
     const edge = graph.addEdge(a.id, b.id, path);
-    const s = graph.addNode(NodeKind.SignalStation, 1, 0, "S");
+    const s = graph.addNode(NodeKind.Station, 1, 0, "S");
 
     // Index 0 and last are endpoints, not valid split points
     expect(graph.splitEdge(edge.id, s, 0)).toBeNull();
@@ -181,7 +181,7 @@ describe("Graph - splitEdge", () => {
 
   it("returns null for unknown edge", () => {
     const graph = new Graph();
-    const s = graph.addNode(NodeKind.SignalStation, 0, 0, "S");
+    const s = graph.addNode(NodeKind.Station, 0, 0, "S");
     expect(graph.splitEdge(999, s, 1)).toBeNull();
   });
 });

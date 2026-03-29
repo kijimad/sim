@@ -1,6 +1,5 @@
 import type { Graph } from "./graph.js";
 import type { TileMap } from "./tilemap.js";
-import { NodeKind } from "./graph.js";
 import { Terrain } from "./types.js";
 
 // --- 資源タイプ ---
@@ -406,7 +405,6 @@ export class Economy {
     let bestDist = Infinity;
 
     for (const node of graph.getAllNodes()) {
-      if (node.kind !== NodeKind.Station) continue;
       const dx = node.tileX - tileX;
       const dy = node.tileY - tileY;
       const dist = dx * dx + dy * dy;

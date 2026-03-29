@@ -1,6 +1,6 @@
 import { Camera } from "./camera.js";
 import { BUILDING_TYPE_NAMES, Economy, RESOURCE_NAMES, Resource, generateCities } from "./economy.js";
-import { Graph, NODE_KIND_NAMES, NodeKind, SIGNAL_LAYOUT_NAMES, SignalLayout } from "./graph.js";
+import { Graph, NODE_KIND_NAMES, NodeKind } from "./graph.js";
 import { InputHandler } from "./input.js";
 import { findPath } from "./pathfinding.js";
 import { Renderer, TILE_SIZE } from "./renderer.js";
@@ -19,8 +19,6 @@ export type ToolMode = (typeof ToolMode)[keyof typeof ToolMode];
 
 export const RailSubMode = {
   Station: "station",
-  SignalPassing: "signal-passing",
-  SignalOvertaking: "signal-overtaking",
 } as const;
 
 export type RailSubMode = (typeof RailSubMode)[keyof typeof RailSubMode];
@@ -68,13 +66,12 @@ export interface InspectInfo {
   readonly edgeFrom?: string;
   readonly edgeTo?: string;
   readonly edgeLength?: number;
-  readonly edgeCapacity?: number;
   readonly nodeId?: number;
   readonly nodeName?: string;
   readonly nodeKind?: string;
   readonly nodeCapacity?: number;
-  readonly nodeLayout?: string;
   readonly nodeTrains?: number;
+  readonly nodeTrainsWaiting?: number;
   readonly nodeWaiting?: number;
   readonly waitingDetail?: readonly { resource: string; amount: number }[];
   readonly cityName?: string;
@@ -271,8 +268,8 @@ export class Game {
         nodeName: node.name,
         nodeKind: NODE_KIND_NAMES[node.kind],
         nodeCapacity: node.capacity,
-        ...(node.kind === NodeKind.SignalStation ? { nodeLayout: SIGNAL_LAYOUT_NAMES[node.signalLayout] } : {}),
-        nodeTrains: this.sim.getNodeTrainCount(node.id),
+        nodeTrains: this.sim.blocks.getNodeSlotCount(node.id, this.graph),
+        nodeTrainsWaiting: this.sim.blocks.getNodeWaitCount(node.id, this.graph),
         nodeWaiting: this.economy.getTotalWaiting(node.id),
         waitingDetail,
       };
@@ -316,7 +313,6 @@ export class Game {
         edgeFrom: fromNode?.name ?? String(closest.edge.fromId),
         edgeTo: toNode?.name ?? String(closest.edge.toId),
         edgeLength: closest.edge.path.length,
-        edgeCapacity: this.sim.blocks.getEdgeCapacity(closest.edge.id),
       };
     }
 
@@ -335,15 +331,6 @@ export class Game {
       this.sim.update(dt, this.graph);
       this.economy.update(dt, this.graph, this.map);
 
-      if (this.config.debug) {
-        try {
-          this.sim.blocks.checkInvariants(this.graph);
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.error("INVARIANT VIOLATION:", err);
-        }
-        this.detectDeadlock();
-      }
 
       this.renderer.render(this.map, this.camera);
       this.renderCities();
@@ -355,7 +342,6 @@ export class Game {
           trainCount: this.sim.getNodeTrainCount(nodeId),
           waitingCargo: this.economy.getTotalWaiting(nodeId),
         }),
-        (edgeId) => this.sim.blocks.getEdgeCapacity(edgeId),
       );
       this.renderer.renderTrains(
         this.sim.getTrainPositions(this.graph),
@@ -404,37 +390,6 @@ export class Game {
     this.camera.y = b.tileY * TILE_SIZE;
   }
 
-
-  private deadlockCounter = 0;
-  private detectDeadlock(): void {
-    const trains = this.sim.getAllTrains();
-    if (trains.length === 0) return;
-    const allAtNode = trains.every((t) => t.state === TrainState.AtNode);
-    if (allAtNode) {
-      this.deadlockCounter++;
-      if (this.deadlockCounter > 60) {
-        // eslint-disable-next-line no-console
-        console.warn("DEADLOCK DETECTED:");
-        for (const t of trains) {
-          const route = this.sim.getRoute(t.routeId);
-          const target = route?.stops[t.routeStopIndex];
-          const nextEdge = this.graph.getEdgesFor(t.nodeId);
-          // eslint-disable-next-line no-console
-          console.warn(
-            `  Train${String(t.id)}: node=${String(t.nodeId)} target=${String(target ?? "?")} ` +
-            `edges=[${nextEdge.map((e) => `${String(e.id)}(free=${String(this.sim.blocks.isEdgeFree(e.id))})`).join(",")}] ` +
-            `canEnter=${nextEdge.map((e) => {
-              const dest = e.fromId === t.nodeId ? e.toId : e.fromId;
-              return `${String(dest)}(${String(this.sim.blocks.canEnterNode(dest, e.id, this.graph))})`;
-            }).join(",")}`
-          );
-        }
-        this.deadlockCounter = 0;
-      }
-    } else {
-      this.deadlockCounter = 0;
-    }
-  }
 
   private renderCities(): void {
     this.renderer.renderBuildings(this.economy.getAllBuildings(), this.camera);
@@ -538,11 +493,6 @@ export class Game {
     this.notify();
   }
 
-  setEdgeCapacity(edgeId: number, capacity: number): void {
-    this.sim.blocks.setEdgeCapacity(edgeId, Math.max(1, capacity));
-    this.notify();
-  }
-
   removeEdge(edgeId: number): void {
     this.graph.removeEdge(edgeId);
     this.notify();
@@ -556,7 +506,10 @@ export class Game {
   }
 
   removeNode(nodeId: number): void {
-    this.graph.removeNode(nodeId);
+    const result = this.graph.removeNode(nodeId);
+    if (result.mergedEdge !== undefined && result.oldEdgeIds !== undefined && result.splitPathIndex !== undefined) {
+      this.sim.handleEdgeMerge(result.oldEdgeIds, result.mergedEdge.id, result.splitPathIndex, this.graph);
+    }
     this.inspectTileX = null;
     this.inspectTileY = null;
     this.notify();
@@ -620,10 +573,6 @@ export class Game {
         this.railSubMode = RailSubMode.Station;
         break;
       case "2":
-        this.setToolMode(ToolMode.Rail);
-        this.railSubMode = RailSubMode.SignalPassing;
-        break;
-      case "3":
         this.setToolMode(ToolMode.Route);
         break;
       case "t":
@@ -644,7 +593,6 @@ export class Game {
   private handleRouteClick(tileX: number, tileY: number): void {
     const node = this.graph.getNodeAt(tileX, tileY);
     if (node === undefined) return;
-    if (node.kind !== NodeKind.Station) return; // 停車駅は駅のみ
 
     this.routeStops.push(node.id);
     this.selectedNodeId = node.id;
@@ -671,8 +619,8 @@ export class Game {
         if (this.trySplitEdge(tileX, tileY)) return;
       }
 
-      const { kind, name, signalLayout } = this.makeNodeInfo(tileX, tileY);
-      const node = this.graph.addNode(kind, tileX, tileY, name, undefined, signalLayout);
+      const { kind, name } = this.makeNodeInfo(tileX, tileY);
+      const node = this.graph.addNode(kind, tileX, tileY, name);
 
       if (this.selectedNodeId !== null) {
         this.connectNodes(this.selectedNodeId, node.id);
@@ -682,13 +630,7 @@ export class Game {
     this.notify();
   }
 
-  private makeNodeInfo(tileX: number, tileY: number): { kind: NodeKind; name: string; signalLayout?: SignalLayout } {
-    if (this.railSubMode === RailSubMode.SignalPassing) {
-      return { kind: NodeKind.SignalStation, name: "S", signalLayout: SignalLayout.Passing };
-    }
-    if (this.railSubMode === RailSubMode.SignalOvertaking) {
-      return { kind: NodeKind.SignalStation, name: "S", signalLayout: SignalLayout.Overtaking };
-    }
+  private makeNodeInfo(tileX: number, tileY: number): { kind: NodeKind; name: string } {
     this.stationCount++;
     const cityName = this.findNearestCityName(tileX, tileY);
     const name = cityName ?? `Station ${String(this.stationCount)}`;
@@ -742,9 +684,13 @@ export class Game {
     const pathPoint = closest.edge.path[closest.pathIndex];
     if (pathPoint === undefined) return false;
 
-    const { kind, name, signalLayout } = this.makeNodeInfo(pathPoint.x, pathPoint.y);
-    const node = this.graph.addNode(kind, pathPoint.x, pathPoint.y, name, undefined, signalLayout);
-    this.graph.splitEdge(closest.edge.id, node, closest.pathIndex);
+    const { kind, name } = this.makeNodeInfo(pathPoint.x, pathPoint.y);
+    const node = this.graph.addNode(kind, pathPoint.x, pathPoint.y, name);
+    const oldEdgeId = closest.edge.id;
+    const result = this.graph.splitEdge(oldEdgeId, node, closest.pathIndex);
+    if (result !== null) {
+      this.sim.handleEdgeSplit(oldEdgeId, result.edge1, result.edge2, closest.pathIndex, this.graph);
+    }
     this.notify();
     return true;
   }
