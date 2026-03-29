@@ -1,6 +1,6 @@
 import { Camera } from "./camera.js";
 import { BUILDING_TYPE_NAMES, Economy, RESOURCE_NAMES, Resource, generateCities } from "./economy.js";
-import { Graph, NODE_KIND_NAMES, NodeKind } from "./graph.js";
+import { Graph, NODE_KIND_NAMES, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
 import { InputHandler } from "./input.js";
 import { findPath } from "./pathfinding.js";
 import { Renderer, TILE_SIZE } from "./renderer.js";
@@ -87,10 +87,17 @@ export interface InspectInfo {
   readonly buildingConsumes?: string;
 }
 
+export interface Toast {
+  readonly id: number;
+  readonly message: string;
+  readonly time: number;
+}
+
 export interface GameSnapshot {
   readonly toolMode: ToolMode;
   readonly railSubMode: RailSubMode;
   readonly selectedNodeId: number | null;
+  readonly railWaypointCount: number;
   readonly routeStops: readonly number[];
   readonly editingRouteId: number | null;
   readonly lastRouteId: number | null;
@@ -102,6 +109,7 @@ export interface GameSnapshot {
   readonly totalPopulation: number;
   readonly trains: readonly TrainInfo[];
   readonly inspect: InspectInfo;
+  readonly toasts: readonly Toast[];
   readonly debug: boolean;
   readonly seed: number;
 }
@@ -120,6 +128,8 @@ export class Game {
 
   private toolMode: ToolMode = ToolMode.Inspect;
   private railSubMode: RailSubMode = RailSubMode.Station;
+  /** レール建設中のウェイポイント（一時的な経由点） */
+  private railWaypoints: { x: number; y: number }[] = [];
   private selectedNodeId: number | null = null;
   private routeStops: number[] = [];
   private lastRouteId: number | null = null;
@@ -127,6 +137,10 @@ export class Game {
   private stationCount = 0;
   private inspectTileX: number | null = null;
   private inspectTileY: number | null = null;
+
+  private toasts: Toast[] = [];
+  private nextToastId = 1;
+  private static readonly TOAST_DURATION = 3.0;
 
   private listeners: GameEventListener[] = [];
   private lastTime = performance.now();
@@ -185,11 +199,37 @@ export class Game {
     }
   }
 
+  private showToast(message: string): void {
+    this.toasts.push({ id: this.nextToastId++, message, time: Game.TOAST_DURATION });
+    this.notify();
+  }
+
+  /** トーストの残り時間を減らし、期限切れを除去する */
+  private updateToasts(dt: number): void {
+    let changed = false;
+    for (let i = this.toasts.length - 1; i >= 0; i--) {
+      const t = this.toasts[i];
+      if (t === undefined) continue;
+      // time は readonly なので新しいオブジェクトに差し替える
+      const remaining = t.time - dt;
+      if (remaining <= 0) {
+        this.toasts.splice(i, 1);
+        changed = true;
+      } else {
+        this.toasts[i] = { ...t, time: remaining };
+      }
+    }
+    if (changed) {
+      this.cachedSnapshot = null;
+    }
+  }
+
   getSnapshot(): GameSnapshot {
     this.cachedSnapshot ??= {
       toolMode: this.toolMode,
       railSubMode: this.railSubMode,
       selectedNodeId: this.selectedNodeId,
+      railWaypointCount: this.railWaypoints.length,
       routeStops: [...this.routeStops],
       editingRouteId: this.editingRouteId,
       lastRouteId: this.lastRouteId,
@@ -229,6 +269,7 @@ export class Game {
         };
       }),
       inspect: this.buildInspectInfo(),
+      toasts: [...this.toasts],
       debug: this.config.debug,
       seed: this.config.seed,
     };
@@ -328,6 +369,7 @@ export class Game {
       const dt = Math.min((now - this.lastTime) / 1000, 0.1);
       this.lastTime = now;
 
+      this.updateToasts(dt);
       this.sim.update(dt, this.graph);
       this.economy.update(dt, this.graph, this.map);
 
@@ -348,6 +390,17 @@ export class Game {
         this.camera,
       );
 
+      // ウェイポイント仮表示
+      if (this.selectedNodeId !== null && this.railWaypoints.length > 0) {
+        const origin = this.graph.getNode(this.selectedNodeId);
+        if (origin !== undefined) {
+          this.renderer.renderWaypoints(
+            [{ x: origin.tileX, y: origin.tileY }, ...this.railWaypoints],
+            this.camera,
+          );
+        }
+      }
+
       this.animFrameId = requestAnimationFrame(loop);
     };
     this.animFrameId = requestAnimationFrame(loop);
@@ -362,25 +415,31 @@ export class Game {
    *       \
    *        E(30,30)
    */
+  /**
+   * デバッグ用ワールド: 交差しない配置
+   *
+   * C(10,10) --- D(30,10)
+   *
+   * A(10,20) --- B(30,20) --- E(50,20)
+   */
   private setupDebugWorld(): void {
     const a = this.graph.addNode(NodeKind.Station, 10, 20, "A");
     const b = this.graph.addNode(NodeKind.Station, 30, 20, "B");
-    const c = this.graph.addNode(NodeKind.Station, 30, 10, "C");
-    const d = this.graph.addNode(NodeKind.Station, 50, 20, "D");
-    const e = this.graph.addNode(NodeKind.Station, 30, 30, "E");
+    const e = this.graph.addNode(NodeKind.Station, 50, 20, "E");
+    const c = this.graph.addNode(NodeKind.Station, 10, 10, "C");
+    const d = this.graph.addNode(NodeKind.Station, 30, 10, "D");
 
     this.connectNodes(a.id, b.id);
-    this.connectNodes(b.id, c.id);
-    this.connectNodes(b.id, d.id);
     this.connectNodes(b.id, e.id);
+    this.connectNodes(c.id, d.id);
 
-    // A-D間のShuttle路線 + 列車2台
-    const route1 = this.sim.addRoute([a.id, d.id], RouteMode.Shuttle, "A-D Line");
+    // A-E間のShuttle路線 + 列車2台
+    const route1 = this.sim.addRoute([a.id, e.id], RouteMode.Shuttle, "A-E Line");
     this.sim.addTrain(route1.id, this.graph);
     this.sim.addTrain(route1.id, this.graph);
 
-    // C-A間のShuttle路線 + 列車1台（Cからスポーン）
-    const route2 = this.sim.addRoute([c.id, a.id], RouteMode.Shuttle, "C-A Line");
+    // C-D間のShuttle路線 + 列車1台
+    const route2 = this.sim.addRoute([c.id, d.id], RouteMode.Shuttle, "C-D Line");
     this.sim.addTrain(route2.id, this.graph);
 
     this.lastRouteId = route1.id;
@@ -420,6 +479,7 @@ export class Game {
     this.toolMode = mode;
     this.routeStops = [];
     this.selectedNodeId = null;
+    this.railWaypoints = [];
     this.notify();
   }
 
@@ -584,6 +644,7 @@ export class Game {
           this.cancelRoute();
         } else {
           this.selectedNodeId = null;
+          this.railWaypoints = [];
         }
         this.notify();
         break;
@@ -604,27 +665,50 @@ export class Game {
 
     if (existing !== undefined) {
       if (this.selectedNodeId === null) {
+        // 既存駅を選択
         this.selectedNodeId = existing.id;
+        this.railWaypoints = [];
       } else if (this.selectedNodeId === existing.id) {
+        // 選択解除
         this.selectedNodeId = null;
+        this.railWaypoints = [];
       } else {
-        this.connectNodes(this.selectedNodeId, existing.id);
+        // 別の既存駅をクリック → ウェイポイント経由で接続
+        const error = this.connectNodesViaWaypoints(this.selectedNodeId, existing.id);
+        if (error !== null) {
+          this.showToast(error);
+        }
         this.selectedNodeId = null;
+        this.railWaypoints = [];
       }
     } else {
-      if (this.map.get(tileX, tileY).terrain === Terrain.Water) return;
-
-      // ノード未選択で既存エッジの近くをクリックした場合、エッジを分割する
-      if (this.selectedNodeId === null) {
-        if (this.trySplitEdge(tileX, tileY)) return;
+      if (this.map.get(tileX, tileY).terrain === Terrain.Water) {
+        this.showToast("水上には建設できません");
+        return;
       }
 
-      const { kind, name } = this.makeNodeInfo(tileX, tileY);
-      const node = this.graph.addNode(kind, tileX, tileY, name);
-
       if (this.selectedNodeId !== null) {
-        this.connectNodes(this.selectedNodeId, node.id);
-        this.selectedNodeId = null;
+        // 駅が選択中 + 空き地クリック → ウェイポイント追加
+        // 直前の地点からのセグメントが非直交で重なるか確認する
+        const prevPoint = this.getLastWaypointOrNode();
+        if (prevPoint !== null) {
+          const segment = findPath(this.map, prevPoint.x, prevPoint.y, tileX, tileY);
+          if (segment !== null && hasNonPerpendicularOverlap(segment, this.graph.getAllEdges())) {
+            this.showToast("既存線路と平行に重ねて敷設できません");
+            return;
+          }
+        }
+        this.railWaypoints.push({ x: tileX, y: tileY });
+      } else {
+        // エッジのパス上には駅を建設できない
+        if (this.isOnEdgePath(tileX, tileY)) {
+          this.showToast("線路上には駅を建設できません");
+          return;
+        }
+
+        // 新しい駅を配置
+        const { kind, name } = this.makeNodeInfo(tileX, tileY);
+        this.graph.addNode(kind, tileX, tileY, name);
       }
     }
     this.notify();
@@ -665,33 +749,77 @@ export class Game {
     return bestName;
   }
 
-  private connectNodes(fromId: number, toId: number): void {
+  /** ウェイポイントの最後、またはなければ選択中ノードの座標を返す */
+  private getLastWaypointOrNode(): { x: number; y: number } | null {
+    if (this.railWaypoints.length > 0) {
+      return this.railWaypoints[this.railWaypoints.length - 1] ?? null;
+    }
+    if (this.selectedNodeId !== null) {
+      const node = this.graph.getNode(this.selectedNodeId);
+      if (node !== undefined) return { x: node.tileX, y: node.tileY };
+    }
+    return null;
+  }
+
+  /** 指定タイルが既存エッジのパス上にあるか */
+  private isOnEdgePath(tileX: number, tileY: number): boolean {
+    for (const edge of this.graph.getAllEdges()) {
+      for (const p of edge.path) {
+        if (p.x === tileX && p.y === tileY) return true;
+      }
+    }
+    return false;
+  }
+
+  /** ウェイポイント経由でノード間を接続する。失敗時はエラー理由を返す */
+  private connectNodesViaWaypoints(fromId: number, toId: number): string | null {
     const fromNode = this.graph.getNode(fromId);
     const toNode = this.graph.getNode(toId);
-    if (fromNode === undefined || toNode === undefined) return;
-    if (this.graph.getEdgesBetween(fromId, toId) !== undefined) return;
-
-    const path = findPath(this.map, fromNode.tileX, fromNode.tileY, toNode.tileX, toNode.tileY);
-    if (path !== null) {
-      this.graph.addEdge(fromId, toId, path);
+    if (fromNode === undefined || toNode === undefined) return null;
+    if (this.graph.getEdgesBetween(fromId, toId) !== undefined) {
+      return "この2駅は既に接続されています";
     }
+
+    // 駅は最大2方向まで接続可能
+    if (this.graph.getEdgesFor(fromId).length >= 2) {
+      return `${fromNode.name} は既に2方向接続済みです`;
+    }
+    if (this.graph.getEdgesFor(toId).length >= 2) {
+      return `${toNode.name} は既に2方向接続済みです`;
+    }
+
+    // ウェイポイントを経由してパスを結合
+    const points: { x: number; y: number }[] = [
+      { x: fromNode.tileX, y: fromNode.tileY },
+      ...this.railWaypoints,
+      { x: toNode.tileX, y: toNode.tileY },
+    ];
+
+    const fullPath: { x: number; y: number }[] = [];
+    for (let i = 0; i < points.length - 1; i++) {
+      const from = points[i];
+      const to = points[i + 1];
+      if (from === undefined || to === undefined) continue;
+      const segment = findPath(this.map, from.x, from.y, to.x, to.y);
+      if (segment === null) return "経路が見つかりません";
+      if (fullPath.length > 0) {
+        fullPath.push(...segment.slice(1));
+      } else {
+        fullPath.push(...segment);
+      }
+    }
+
+    if (fullPath.length >= 2) {
+      if (hasNonPerpendicularOverlap(fullPath, this.graph.getAllEdges())) {
+        return "既存線路と平行に重ねて敷設できません";
+      }
+      this.graph.addEdge(fromId, toId, fullPath);
+    }
+    return null;
   }
 
-  private trySplitEdge(tileX: number, tileY: number): boolean {
-    const closest = this.graph.findClosestEdgePoint(tileX, tileY);
-    if (closest === null || closest.distance > 1) return false;
-
-    const pathPoint = closest.edge.path[closest.pathIndex];
-    if (pathPoint === undefined) return false;
-
-    const { kind, name } = this.makeNodeInfo(pathPoint.x, pathPoint.y);
-    const node = this.graph.addNode(kind, pathPoint.x, pathPoint.y, name);
-    const oldEdgeId = closest.edge.id;
-    const result = this.graph.splitEdge(oldEdgeId, node, closest.pathIndex);
-    if (result !== null) {
-      this.sim.handleEdgeSplit(oldEdgeId, result.edge1, result.edge2, closest.pathIndex, this.graph);
-    }
-    this.notify();
-    return true;
+  private connectNodes(fromId: number, toId: number): void {
+    this.connectNodesViaWaypoints(fromId, toId);
   }
+
 }

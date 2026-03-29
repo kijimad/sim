@@ -14,16 +14,21 @@ export class BlockSystem {
   /** nodeId -> trainId[]（先頭がスロット内、後方が待機列） */
   private nodeQueues = new Map<number, number[]>();
 
+  /** キューを取得または作成してtrainIdを追加する */
+  private static pushToQueue<K>(map: Map<K, number[]>, key: K, trainId: number): void {
+    let q = map.get(key);
+    if (q === undefined) {
+      q = [];
+      map.set(key, q);
+    }
+    q.push(trainId);
+  }
+
   // --- ノード ---
 
   /** ノードキューに列車を追加（常に成功） */
   enqueueNode(nodeId: number, trainId: number): void {
-    let q = this.nodeQueues.get(nodeId);
-    if (q === undefined) {
-      q = [];
-      this.nodeQueues.set(nodeId, q);
-    }
-    q.push(trainId);
+    BlockSystem.pushToQueue(this.nodeQueues, nodeId, trainId);
   }
 
   /** ノードキューから列車を除去 */
@@ -76,13 +81,7 @@ export class BlockSystem {
 
   /** セクションキューに列車を追加（常に成功） */
   enqueueSection(edgeId: number, section: number, forward: boolean, trainId: number): void {
-    const key = sectionKey(edgeId, section, forward);
-    let q = this.sectionQueues.get(key);
-    if (q === undefined) {
-      q = [];
-      this.sectionQueues.set(key, q);
-    }
-    q.push(trainId);
+    BlockSystem.pushToQueue(this.sectionQueues, sectionKey(edgeId, section, forward), trainId);
   }
 
   /** セクションキューから列車を除去 */

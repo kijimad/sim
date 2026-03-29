@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Graph, NodeKind } from "./graph.js";
+import { Graph, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
 
 describe("Graph - Nodes", () => {
   it("adds a node and retrieves it by id", () => {
@@ -53,7 +53,7 @@ describe("Graph - Nodes", () => {
     graph.addNode(NodeKind.Station, 0, 0, "A");
     graph.addNode(NodeKind.Station, 1, 1, "B");
     graph.addNode(NodeKind.Station, 2, 2, "C");
-    expect(graph.getAllNodes()).toHaveLength(3);
+    expect([...graph.getAllNodes()]).toHaveLength(3);
   });
 
   it("nodeCount reflects additions and removals", () => {
@@ -212,5 +212,88 @@ describe("Graph - findClosestEdgePoint", () => {
     expect(result).not.toBeNull();
     if (result === null) return;
     expect(result.pathIndex).toBe(1);
+  });
+});
+
+describe("hasNonPerpendicularOverlap - 交差判定", () => {
+  it("平行な重なりを拒否する（同方向）", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 5, 0, "B");
+    graph.addEdge(a.id, b.id, [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 },
+    ]);
+
+    // 新パス: 同じ水平方向で重なる
+    const newPath = [
+      { x: 0, y: 1 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 1 },
+    ];
+    expect(hasNonPerpendicularOverlap(newPath, graph.getAllEdges())).toBe(true);
+  });
+
+  it("平行な重なりを拒否する（逆方向）", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 3, 0, "B");
+    graph.addEdge(a.id, b.id, [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 },
+    ]);
+
+    // 新パス: 逆方向で重なる（内積 < 0も非直交）
+    const newPath = [
+      { x: 4, y: 1 }, { x: 2, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 },
+    ];
+    expect(hasNonPerpendicularOverlap(newPath, graph.getAllEdges())).toBe(true);
+  });
+
+  it("直交する交差を許可する", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 2, "A");
+    const b = graph.addNode(NodeKind.Station, 4, 2, "B");
+    graph.addEdge(a.id, b.id, [
+      { x: 0, y: 2 }, { x: 1, y: 2 }, { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 },
+    ]);
+
+    // 新パス: 垂直方向で(2,2)を通過する
+    const newPath = [
+      { x: 2, y: 0 }, { x: 2, y: 1 }, { x: 2, y: 2 }, { x: 2, y: 3 }, { x: 2, y: 4 },
+    ];
+    expect(hasNonPerpendicularOverlap(newPath, graph.getAllEdges())).toBe(false);
+  });
+
+  it("重なりがなければ許可する", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 3, 0, "B");
+    graph.addEdge(a.id, b.id, [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 },
+    ]);
+
+    const newPath = [
+      { x: 0, y: 5 }, { x: 1, y: 5 }, { x: 2, y: 5 }, { x: 3, y: 5 },
+    ];
+    expect(hasNonPerpendicularOverlap(newPath, graph.getAllEdges())).toBe(false);
+  });
+
+  it("端点（ノード位置）は判定から除外する", () => {
+    const graph = new Graph();
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = graph.addNode(NodeKind.Station, 3, 0, "B");
+    graph.addEdge(a.id, b.id, [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 },
+    ]);
+
+    // 端点(0,0)はスキップ、中間は重なりなし
+    const newPath = [
+      { x: 0, y: 0 }, { x: 0, y: 1 }, { x: 0, y: 2 }, { x: 3, y: 0 },
+    ];
+    expect(hasNonPerpendicularOverlap(newPath, graph.getAllEdges())).toBe(false);
+  });
+
+  it("既存エッジがなければ常に許可する", () => {
+    const newPath = [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 },
+    ];
+    expect(hasNonPerpendicularOverlap(newPath, [])).toBe(false);
   });
 });

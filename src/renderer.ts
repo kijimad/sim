@@ -112,6 +112,60 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
+  /** ウェイポイントとそれを繋ぐ仮線を描画する */
+  renderWaypoints(
+    points: readonly { x: number; y: number }[],
+    camera: Camera,
+  ): void {
+    if (points.length === 0) return;
+    const { ctx, canvas } = this;
+    camera.applyTransform(ctx, canvas);
+
+    // 仮線（点線）
+    if (points.length >= 2) {
+      const first = points[0];
+      if (first !== undefined) {
+        ctx.beginPath();
+        ctx.moveTo(first.x * TILE_SIZE + HALF_TILE, first.y * TILE_SIZE + HALF_TILE);
+        for (let i = 1; i < points.length; i++) {
+          const p = points[i];
+          if (p === undefined) continue;
+          ctx.lineTo(p.x * TILE_SIZE + HALF_TILE, p.y * TILE_SIZE + HALF_TILE);
+        }
+        ctx.strokeStyle = "rgba(255, 255, 100, 0.5)";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 4]);
+        ctx.lineCap = "round";
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
+    // ウェイポイントマーカー（起点の駅は除く: index > 0）
+    for (let i = 1; i < points.length; i++) {
+      const p = points[i];
+      if (p === undefined) continue;
+      const px = p.x * TILE_SIZE + HALF_TILE;
+      const py = p.y * TILE_SIZE + HALF_TILE;
+
+      // ダイヤモンド型マーカー
+      const s = TILE_SIZE * 0.25;
+      ctx.beginPath();
+      ctx.moveTo(px, py - s);
+      ctx.lineTo(px + s, py);
+      ctx.lineTo(px, py + s);
+      ctx.lineTo(px - s, py);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(255, 255, 100, 0.8)";
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
   private renderEdge(edge: GraphEdge): void {
     // 常に複線として描画する
     const offset = 3;
@@ -137,7 +191,7 @@ export class Renderer {
     }
   }
 
-  /** パスを垂直方向にオフセットして描画する */
+  /** パスを垂直方向にオフセットして描画する（曲がり角は前後の法線を平均） */
   private drawOffsetPath(
     path: readonly PathNode[],
     color: string,
@@ -152,9 +206,24 @@ export class Renderer {
       const curr = path[i];
       if (curr === undefined) continue;
 
-      // 進行方向に対して垂直にオフセット
+      // 前後のセグメントから法線を計算し平均する
       let nx = 0;
       let ny = 0;
+      let count = 0;
+
+      if (i > 0) {
+        const prev = path[i - 1];
+        if (prev !== undefined) {
+          const dx = curr.x - prev.x;
+          const dy = curr.y - prev.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len > 0) {
+            nx += -dy / len;
+            ny += dx / len;
+            count++;
+          }
+        }
+      }
       if (i < path.length - 1) {
         const next = path[i + 1];
         if (next !== undefined) {
@@ -162,20 +231,19 @@ export class Renderer {
           const dy = next.y - curr.y;
           const len = Math.sqrt(dx * dx + dy * dy);
           if (len > 0) {
-            nx = -dy / len;
-            ny = dx / len;
+            nx += -dy / len;
+            ny += dx / len;
+            count++;
           }
         }
-      } else if (i > 0) {
-        const prev = path[i - 1];
-        if (prev !== undefined) {
-          const dx = curr.x - prev.x;
-          const dy = curr.y - prev.y;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          if (len > 0) {
-            nx = -dy / len;
-            ny = dx / len;
-          }
+      }
+
+      if (count > 1) {
+        // 平均法線を正規化する
+        const nLen = Math.sqrt(nx * nx + ny * ny);
+        if (nLen > 0) {
+          nx /= nLen;
+          ny /= nLen;
         }
       }
 

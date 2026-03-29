@@ -55,14 +55,27 @@ function computeSignalPositions(pathLength: number): number[] {
   return positions;
 }
 
+/** パス長→信号位置のキャッシュ（同じ長さなら同じ結果） */
+const signalPositionCache = new Map<number, number[]>();
+
+/** キャッシュ付きで信号位置を取得する */
+function getCachedSignalPositions(pathLength: number): number[] {
+  let cached = signalPositionCache.get(pathLength);
+  if (cached === undefined) {
+    cached = computeSignalPositions(pathLength);
+    signalPositionCache.set(pathLength, cached);
+  }
+  return cached;
+}
+
 /** エッジ内のセクション数 */
 export function getSectionCount(edge: GraphEdge): number {
-  return computeSignalPositions(edge.path.length).length + 1;
+  return getCachedSignalPositions(edge.path.length).length + 1;
 }
 
 /** パスインデックスが属するセクションインデックスを返す */
 export function getSectionAt(edge: GraphEdge, pathIndex: number): number {
-  const positions = computeSignalPositions(edge.path.length);
+  const positions = getCachedSignalPositions(edge.path.length);
   for (let i = 0; i < positions.length; i++) {
     const pos = positions[i];
     if (pos !== undefined && pathIndex < pos) return i;
@@ -72,7 +85,53 @@ export function getSectionAt(edge: GraphEdge, pathIndex: number): number {
 
 /** セクション境界のパスインデックスリストを返す（描画用） */
 export function getSignalPositions(edge: GraphEdge): number[] {
-  return computeSignalPositions(edge.path.length);
+  return getCachedSignalPositions(edge.path.length);
+}
+
+/**
+ * 新パスが既存エッジ群と重なるタイルで、直交（90度）以外の交差がないか判定する。
+ * 新パスの端点（index 0 と最終）はノード位置なので判定から除外する。
+ */
+export function hasNonPerpendicularOverlap(
+  newPath: readonly { x: number; y: number }[],
+  existingEdges: Iterable<GraphEdge>,
+): boolean {
+  // 既存エッジのタイル→方向のインデックスを構築する
+  const existingDirs = new Map<string, { dx: number; dy: number }[]>();
+  for (const edge of existingEdges) {
+    for (let i = 0; i < edge.path.length - 1; i++) {
+      const p = edge.path[i];
+      const next = edge.path[i + 1];
+      if (p === undefined || next === undefined) continue;
+      const key = `${String(p.x)},${String(p.y)}`;
+      let dirs = existingDirs.get(key);
+      if (dirs === undefined) {
+        dirs = [];
+        existingDirs.set(key, dirs);
+      }
+      dirs.push({ dx: next.x - p.x, dy: next.y - p.y });
+    }
+  }
+
+  // 新パスの各タイル（端点を除く）で重なりを確認する
+  for (let i = 1; i < newPath.length - 1; i++) {
+    const p = newPath[i];
+    const next = newPath[i + 1];
+    if (p === undefined || next === undefined) continue;
+
+    const key = `${String(p.x)},${String(p.y)}`;
+    const dirs = existingDirs.get(key);
+    if (dirs === undefined) continue;
+
+    const ndx = next.x - p.x;
+    const ndy = next.y - p.y;
+
+    for (const ed of dirs) {
+      // 内積: 0なら直交、非0なら平行または斜め
+      if (ndx * ed.dx + ndy * ed.dy !== 0) return true;
+    }
+  }
+  return false;
 }
 
 export class Graph {
@@ -153,8 +212,8 @@ export class Graph {
     return undefined;
   }
 
-  getAllNodes(): readonly GraphNode[] {
-    return [...this.nodes.values()];
+  getAllNodes(): IterableIterator<GraphNode> {
+    return this.nodes.values();
   }
 
   get nodeCount(): number {
@@ -203,8 +262,8 @@ export class Graph {
     return result;
   }
 
-  getAllEdges(): readonly GraphEdge[] {
-    return [...this.edges.values()];
+  getAllEdges(): IterableIterator<GraphEdge> {
+    return this.edges.values();
   }
 
   get edgeCount(): number {

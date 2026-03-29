@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { Game, GameSnapshot } from "../game.js";
+import type { Game, GameSnapshot, Toast } from "../game.js";
 import { ToolMode } from "../game.js";
 import { InspectPanel } from "./InspectPanel.js";
 import { RouteList } from "./RouteList.js";
@@ -12,14 +12,27 @@ interface GameUIProps {
   readonly game: Game;
 }
 
+function ToastContainer({ toasts }: { toasts: readonly Toast[] }) {
+  if (toasts.length === 0) return null;
+  return (
+    <div className="toast-container">
+      {toasts.map((t) => (
+        <div key={t.id} className="toast-item">{t.message}</div>
+      ))}
+    </div>
+  );
+}
+
 function RailPanel({ snap }: { snap: GameSnapshot }) {
   return (
     <div className="rail-panel">
       <div className="panel-header">Rail</div>
       <div className="rail-hint">
         {snap.selectedNodeId !== null
-          ? "Click another node to connect, or empty tile to place"
-          : "Click to place, or click an edge to split"}
+          ? snap.railWaypointCount > 0
+            ? `${String(snap.railWaypointCount)} waypoint(s). Click station to connect, or empty tile for more`
+            : "Click empty tile for waypoint, or station to connect"
+          : "Click station to select, or empty tile to place"}
       </div>
     </div>
   );
@@ -64,6 +77,8 @@ export function GameUI({ game }: GameUIProps) {
         />
         <TrainList trains={snap.trains} />
       </div>
+
+      <ToastContainer toasts={snap.toasts} />
     </div>
   );
 }

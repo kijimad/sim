@@ -182,6 +182,16 @@ export class Simulation {
     return this.trains.size;
   }
 
+  /** 列車を古いエッジから新エッジに再配置する（セクション情報を更新） */
+  private reassignTrainToEdge(train: Train, newEdgeId: number, graph: Graph): void {
+    const edge = graph.getEdge(newEdgeId);
+    train.edgeId = newEdgeId;
+    if (edge !== undefined) {
+      train.sectionIndex = getSectionAt(edge, train.pathIndex);
+      this.blocks.enqueueSection(newEdgeId, train.sectionIndex, train.forward, train.id);
+    }
+  }
+
   /** エッジ分割後: 古いエッジ上の列車を新エッジに移動する */
   handleEdgeSplit(
     oldEdgeId: number,
@@ -195,16 +205,10 @@ export class Simulation {
       this.blocks.dequeueSection(oldEdgeId, train.sectionIndex, train.forward, train.id);
 
       if (train.pathIndex < splitPathIndex) {
-        train.edgeId = newEdge1.id;
+        this.reassignTrainToEdge(train, newEdge1.id, graph);
       } else {
-        train.edgeId = newEdge2.id;
         train.pathIndex -= splitPathIndex;
-      }
-
-      const edge = graph.getEdge(train.edgeId);
-      if (edge !== undefined) {
-        train.sectionIndex = getSectionAt(edge, train.pathIndex);
-        this.blocks.enqueueSection(train.edgeId, train.sectionIndex, train.forward, train.id);
+        this.reassignTrainToEdge(train, newEdge2.id, graph);
       }
     }
   }
@@ -222,17 +226,10 @@ export class Simulation {
       if (oldIdx === -1) continue;
 
       this.blocks.dequeueSection(train.edgeId, train.sectionIndex, train.forward, train.id);
-
       if (oldIdx === 1) {
         train.pathIndex += splitPathIndex;
       }
-      train.edgeId = newEdgeId;
-
-      const edge = graph.getEdge(newEdgeId);
-      if (edge !== undefined) {
-        train.sectionIndex = getSectionAt(edge, train.pathIndex);
-        this.blocks.enqueueSection(train.edgeId, train.sectionIndex, train.forward, train.id);
-      }
+      this.reassignTrainToEdge(train, newEdgeId, graph);
     }
   }
 
