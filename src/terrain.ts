@@ -61,6 +61,40 @@ const DEFAULT_CONFIG: TerrainGenConfig = {
   mountainThreshold: 0.65,
 };
 
+/**
+ * 地形プレビュー用: 指定サイズの Uint8Array を生成する（0=Flat, 1=Mountain, 2=Water）。
+ * previewSize はプレビュー画像のピクセル数。mapSize は実際のマップサイズ（比率計算用）。
+ */
+export function generateTerrainPreview(
+  previewSize: number,
+  config: TerrainGenConfig,
+): Uint8Array {
+  const { seed, waterThreshold, mountainThreshold } = config;
+  const rng = createRng(seed);
+  const coarse = createNoiseLayer(rng, 16, 16);
+  const detail = createNoiseLayer(rng, 32, 32);
+  const data = new Uint8Array(previewSize * previewSize);
+
+  for (let y = 0; y < previewSize; y++) {
+    for (let x = 0; x < previewSize; x++) {
+      const nx = x / previewSize;
+      const ny = y / previewSize;
+      const value = coarse(nx, ny) * 0.7 + detail(nx, ny) * 0.3;
+
+      let t: number;
+      if (value < waterThreshold) {
+        t = 2; // Water
+      } else if (value > mountainThreshold) {
+        t = 1; // Mountain
+      } else {
+        t = 0; // Flat
+      }
+      data[y * previewSize + x] = t;
+    }
+  }
+  return data;
+}
+
 export function generateTerrain(
   map: TileMap,
   config: Partial<TerrainGenConfig> = {},

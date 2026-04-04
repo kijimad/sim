@@ -248,3 +248,58 @@ describe("generateCities", () => {
     }
   });
 });
+
+describe("Economy - getCityResources", () => {
+  it("都市内の建物の生産品/消費品を返す", () => {
+    const economy = new Economy();
+    const city = economy.addCity("Town", 10, 10, 5);
+    economy.addBuilding(BuildingType.Farm, 11, 10);
+    economy.addBuilding(BuildingType.Commercial, 12, 10);
+
+    const res = economy.getCityResources(city.id);
+    expect(res.produces.has(Resource.Rice)).toBe(true);
+    expect(res.produces.has(Resource.Passengers)).toBe(true);
+    expect(res.consumes.has(Resource.Rice)).toBe(true);
+  });
+
+  it("存在しない都市IDは空を返す", () => {
+    const economy = new Economy();
+    const res = economy.getCityResources(999);
+    expect(res.produces.size).toBe(0);
+    expect(res.consumes.size).toBe(0);
+  });
+});
+
+describe("Economy - 容量制限", () => {
+  it("容量超過分は駅に残る", () => {
+    const graph = new Graph();
+    const s1 = graph.addNode(NodeKind.Station, 5, 5, "A");
+    const s2 = graph.addNode(NodeKind.Station, 20, 20, "B");
+
+    const economy = new Economy();
+    economy.addWaiting(s1.id, Resource.Passengers, 100, s2.id);
+
+    const { newCargo } = economy.trainArrive([s1.id], [], graph, [s1.id, s2.id], 30);
+
+    // 30しか積めない
+    let total = 0;
+    for (const c of newCargo) {
+      total += c.amount;
+    }
+    expect(total).toBe(30);
+
+    // 70が残っている
+    expect(economy.getTotalWaiting(s1.id)).toBe(70);
+  });
+});
+
+describe("Economy - 運行コスト", () => {
+  it("deductRunningCost で所持金が減る", () => {
+    const economy = new Economy();
+    economy.deductRunningCost(-1000); // +1000
+    expect(economy.money).toBe(1000);
+
+    economy.deductRunningCost(300);
+    expect(economy.money).toBe(700);
+  });
+});

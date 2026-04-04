@@ -140,4 +140,31 @@ describe("BlockSystem - キューベース", () => {
     bs.placeAtNode(1, 10);
     expect(() => { bs.checkInvariants(); }).not.toThrow();
   });
+
+  it("removeTrain at node", () => {
+    const bs = new BlockSystem();
+    bs.placeAtNode(1, 10);
+    bs.placeAtNode(1, 20);
+    expect(bs.getNodeTrainCount(1)).toBe(2);
+
+    bs.removeTrain(10, true, 1, -1, 0, true);
+    expect(bs.getNodeTrainCount(1)).toBe(1);
+  });
+
+  it("removeTrain on edge", () => {
+    const graph = new Graph();
+    const s1 = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const s2 = graph.addNode(NodeKind.Station, 5, 0, "B");
+    const edge = graph.addEdge(s1.id, s2.id, [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }, { x: 3, y: 0 }, { x: 4, y: 0 }, { x: 5, y: 0 },
+    ]);
+
+    const bs = new BlockSystem();
+    bs.placeAtNode(s1.id, 10);
+    bs.tryDepart(10, s1.id, edge.id, 0, true, graph);
+
+    bs.removeTrain(10, false, -1, edge.id, 0, true);
+    // エッジ上の列車が除去されている
+    expect(bs.isSectionEmpty(edge.id, 0, true)).toBe(true);
+  });
 });
