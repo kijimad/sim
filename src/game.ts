@@ -1,5 +1,7 @@
 import { Camera } from "./camera.js";
+import type { GameConfig, GameSnapshot, ToolMode, RailSubMode } from "./game-world.js";
 import { GameWorld } from "./game-world.js";
+import type { RouteMode } from "./simulation.js";
 import { InputHandler } from "./input.js";
 import { Renderer, TILE_SIZE } from "./renderer.js";
 
@@ -42,9 +44,9 @@ export class Game {
   private listeners: GameEventListener[] = [];
   private lastTime = performance.now();
   private animFrameId = 0;
-  private cachedSnapshot: import("./game-world.js").GameSnapshot | null = null;
+  private cachedSnapshot: GameSnapshot | null = null;
 
-  constructor(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, config: import("./game-world.js").GameConfig) {
+  constructor(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, config: GameConfig) {
     this.canvas = canvas;
     this.renderer = new Renderer(ctx, canvas);
     this.world = new GameWorld(config);
@@ -88,7 +90,7 @@ export class Game {
     }
   }
 
-  getSnapshot(): import("./game-world.js").GameSnapshot {
+  getSnapshot(): GameSnapshot {
     this.cachedSnapshot ??= this.world.getSnapshot();
     return this.cachedSnapshot;
   }
@@ -175,12 +177,12 @@ export class Game {
 
   // --- UI アクション（GameWorld に委譲してnotify） ---
 
-  setToolMode(mode: import("./game-world.js").ToolMode): void {
+  setToolMode(mode: ToolMode): void {
     this.world.setToolMode(mode);
     this.notify();
   }
 
-  setRailSubMode(mode: import("./game-world.js").RailSubMode): void {
+  setRailSubMode(mode: RailSubMode): void {
     this.world.setRailSubMode(mode);
     this.notify();
   }
@@ -195,7 +197,7 @@ export class Game {
     this.notify();
   }
 
-  confirmRoute(mode: import("./simulation.js").RouteMode): void {
+  confirmRoute(mode: RouteMode): void {
     this.world.confirmRoute(mode);
     this.notify();
   }

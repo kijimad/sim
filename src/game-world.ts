@@ -692,7 +692,8 @@ export class GameWorld {
       const visited = new Set<number>([startId]);
       const queue = [startId];
       while (queue.length > 0) {
-        const current = queue.shift()!;
+        const current = queue.shift();
+        if (current === undefined) break;
         const neighbors = directNeighbors.get(current);
         if (neighbors === undefined) continue;
         for (const nid of neighbors) {
@@ -948,7 +949,7 @@ export class GameWorld {
     const error = this.connectNodesViaWaypoints(fromId, toId);
     this.railWaypoints = [];
     if (error !== null) {
-      console.warn(`connectNodes(${String(fromId)}, ${String(toId)}): ${error}`);
+      throw new Error(`connectNodes(${String(fromId)}, ${String(toId)}): ${error}`);
     }
   }
 

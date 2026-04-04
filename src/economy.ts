@@ -272,7 +272,9 @@ export class Economy {
       if (destinations.length === 0) continue;
 
       const amount = building.population * 0.1;
-      const destId = destinations[Math.floor(Math.random() * destinations.length)]!;
+      const destIdx = Math.floor(Math.random() * destinations.length);
+      const destId = destinations[destIdx];
+      if (destId === undefined) continue;
       this.addWaiting(stationId, building.produces, amount, destId);
     }
 
@@ -291,7 +293,9 @@ export class Economy {
       if (candidates.length === 0) continue;
 
       const amount = building.population * 0.05;
-      const destId = candidates[Math.floor(Math.random() * candidates.length)]!;
+      const candIdx = Math.floor(Math.random() * candidates.length);
+      const destId = candidates[candIdx];
+      if (destId === undefined) continue;
       this.addWaiting(stationId, Resource.Passengers, amount, destId);
     }
   }
