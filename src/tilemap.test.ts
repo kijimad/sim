@@ -41,4 +41,49 @@ describe("TileMap", () => {
     expect(() => { map.set(-1, 0, { terrain: Terrain.Flat }); }).toThrow(RangeError);
     expect(() => { map.set(4, 0, { terrain: Terrain.Flat }); }).toThrow(RangeError);
   });
+
+  it("handles chunk boundaries correctly", () => {
+    const map = new TileMap(128, 128);
+    // チャンク境界をまたぐ座標でset/getが正しく動作する
+    map.set(63, 63, { terrain: Terrain.Water });
+    map.set(64, 64, { terrain: Terrain.Mountain });
+    map.set(127, 127, { terrain: Terrain.Water });
+
+    expect(map.get(63, 63).terrain).toBe(Terrain.Water);
+    expect(map.get(64, 64).terrain).toBe(Terrain.Mountain);
+    expect(map.get(127, 127).terrain).toBe(Terrain.Water);
+    expect(map.get(0, 0).terrain).toBe(Terrain.Flat);
+    expect(map.get(64, 63).terrain).toBe(Terrain.Flat);
+  });
+
+  it("2000x2000 map creates instantly", () => {
+    const start = performance.now();
+    const map = new TileMap(2000, 2000);
+    const createTime = performance.now() - start;
+    // 生成は10ms以内（チャンクは遅延生成）
+    expect(createTime).toBeLessThan(10);
+
+    // アクセスすると遅延でチャンクが生成される
+    map.set(1999, 1999, { terrain: Terrain.Mountain });
+    expect(map.get(1999, 1999).terrain).toBe(Terrain.Mountain);
+    expect(map.get(0, 0).terrain).toBe(Terrain.Flat);
+  });
+
+  it("2000x2000 map sparse access is fast", () => {
+    const map = new TileMap(2000, 2000);
+    const start = performance.now();
+    // 1000箇所にランダムアクセス
+    for (let i = 0; i < 1000; i++) {
+      const x = (i * 7) % 2000;
+      const y = (i * 13) % 2000;
+      map.set(x, y, { terrain: Terrain.Water });
+    }
+    for (let i = 0; i < 1000; i++) {
+      const x = (i * 7) % 2000;
+      const y = (i * 13) % 2000;
+      expect(map.get(x, y).terrain).toBe(Terrain.Water);
+    }
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(50);
+  });
 });

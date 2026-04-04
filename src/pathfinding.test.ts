@@ -84,4 +84,81 @@ describe("findPath", () => {
     expect(findPath(map, -1, 0, 3, 3)).toBeNull();
     expect(findPath(map, 0, 0, 10, 10)).toBeNull();
   });
+
+  it("produces zigzag path for diagonal movement", () => {
+    const map = makeMap(20, 20);
+    const path = findPath(map, 0, 0, 10, 10);
+    expect(path).not.toBeNull();
+    if (path === null) return;
+
+    // パスの長さは21（10水平 + 10垂直 + 1始点）
+    expect(path).toHaveLength(21);
+
+    // 同じ方向に3回以上連続しないことを確認（ジグザグ）
+    let maxConsecutive = 1;
+    let consecutive = 1;
+    for (let i = 2; i < path.length; i++) {
+      const prev = path[i - 1]!;
+      const curr = path[i]!;
+      const prevPrev = path[i - 2]!;
+      const prevDx = prev.x - prevPrev.x;
+      const currDx = curr.x - prev.x;
+      if ((prevDx === 0) === (currDx === 0)) {
+        consecutive++;
+        maxConsecutive = Math.max(maxConsecutive, consecutive);
+      } else {
+        consecutive = 1;
+      }
+    }
+    // 完全なジグザグなら maxConsecutive = 1 だが、端の都合で2まで許容
+    expect(maxConsecutive).toBeLessThanOrEqual(2);
+  });
+
+  it("avoids blocked tiles", () => {
+    const map = makeMap(10, 10);
+    const blocked = new Set(["2,0", "2,1", "2,2", "2,3", "2,4"]);
+    const path = findPath(map, 0, 2, 5, 2, blocked);
+    expect(path).not.toBeNull();
+    if (path === null) return;
+
+    // ブロックされたタイルを通らないこと
+    for (const node of path) {
+      expect(blocked.has(`${String(node.x)},${String(node.y)}`)).toBe(false);
+    }
+  });
+
+  it("blocked tiles do not block start and end", () => {
+    const map = makeMap(10, 10);
+    // 始点と終点をブロック対象にしても到達可能
+    const blocked = new Set(["0,0", "5,0"]);
+    const path = findPath(map, 0, 0, 5, 0, blocked);
+    expect(path).not.toBeNull();
+    expect(path?.[0]).toEqual({ x: 0, y: 0 });
+    expect(path?.[path.length - 1]).toEqual({ x: 5, y: 0 });
+  });
+
+  it("performs well on large maps (500x500)", () => {
+    const map = makeMap(500, 500);
+    const start = performance.now();
+    const path = findPath(map, 0, 0, 499, 499);
+    const elapsed = performance.now() - start;
+
+    expect(path).not.toBeNull();
+    // 500ms以内に完了すること
+    expect(elapsed).toBeLessThan(500);
+    // パスの長さが妥当（マンハッタン距離 = 998、ジグザグで999）
+    expect(path!.length).toBe(999);
+  });
+
+  it("performs well on 2000x2000 maps", () => {
+    const map = makeMap(2000, 2000);
+    const start = performance.now();
+    const path = findPath(map, 0, 0, 1999, 1999);
+    const elapsed = performance.now() - start;
+
+    expect(path).not.toBeNull();
+    // 2秒以内に完了すること
+    expect(elapsed).toBeLessThan(2000);
+    expect(path!.length).toBe(3999);
+  });
 });

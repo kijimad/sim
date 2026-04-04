@@ -14,7 +14,7 @@ import type { ConsistStats } from "./vehicle.js";
 
 // --- 定数 ---
 
-const MAP_SIZE = 256;
+const MAP_SIZE = 512;
 
 // --- 型 ---
 
@@ -1122,12 +1122,13 @@ export class GameWorld {
   }
 
   buildPreviewPath(points: readonly { x: number; y: number }[]): { x: number; y: number }[] {
+    const blocked = this.buildBlockedTiles();
     const fullPath: { x: number; y: number }[] = [];
     for (let i = 0; i < points.length - 1; i++) {
       const from = points[i];
       const to = points[i + 1];
       if (from === undefined || to === undefined) continue;
-      const segment = findPath(this.map, from.x, from.y, to.x, to.y);
+      const segment = findPath(this.map, from.x, from.y, to.x, to.y, blocked);
       if (segment === null) return fullPath;
       if (fullPath.length > 0) {
         fullPath.push(...segment.slice(1));
@@ -1184,6 +1185,20 @@ export class GameWorld {
     return false;
   }
 
+  /** 既存レールと駅が占有するタイルのセットを構築する */
+  private buildBlockedTiles(): Set<string> {
+    const blocked = new Set<string>();
+    for (const edge of this.graph.getAllEdges()) {
+      for (const p of edge.path) {
+        blocked.add(`${String(p.x)},${String(p.y)}`);
+      }
+    }
+    for (const node of this.graph.getAllNodes()) {
+      blocked.add(`${String(node.tileX)},${String(node.tileY)}`);
+    }
+    return blocked;
+  }
+
   connectNodesViaWaypoints(fromId: number, toId: number): string | null {
     const fromNode = this.graph.getNode(fromId);
     const toNode = this.graph.getNode(toId);
@@ -1213,12 +1228,13 @@ export class GameWorld {
       { x: toNode.tileX, y: toNode.tileY },
     ];
 
+    const blocked = this.buildBlockedTiles();
     const fullPath: { x: number; y: number }[] = [];
     for (let i = 0; i < points.length - 1; i++) {
       const from = points[i];
       const to = points[i + 1];
       if (from === undefined || to === undefined) continue;
-      const segment = findPath(this.map, from.x, from.y, to.x, to.y);
+      const segment = findPath(this.map, from.x, from.y, to.x, to.y, blocked);
       if (segment === null) return "経路が見つかりません";
       if (fullPath.length > 0) {
         fullPath.push(...segment.slice(1));

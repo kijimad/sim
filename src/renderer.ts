@@ -24,6 +24,13 @@ const BUILDING_COLORS: Record<number, string> = {
   4: "#a04040", // 工場 - 赤
 };
 
+interface ViewBounds {
+  readonly minWx: number;
+  readonly minWy: number;
+  readonly maxWx: number;
+  readonly maxWy: number;
+}
+
 export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly canvas: HTMLCanvasElement;
@@ -31,6 +38,18 @@ export class Renderer {
   constructor(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
     this.ctx = ctx;
     this.canvas = canvas;
+  }
+
+  /** カメラから表示範囲のワールド座標を算出する（マージン付き） */
+  private getViewBounds(camera: Camera, margin: number = TILE_SIZE * 2): ViewBounds {
+    const tl = camera.screenToWorld(0, 0, this.canvas.width, this.canvas.height);
+    const br = camera.screenToWorld(this.canvas.width, this.canvas.height, this.canvas.width, this.canvas.height);
+    return {
+      minWx: tl.wx - margin,
+      minWy: tl.wy - margin,
+      maxWx: br.wx + margin,
+      maxWy: br.wy + margin,
+    };
   }
 
   /** 背景付きラベルを描画する */
@@ -118,25 +137,50 @@ export class Renderer {
     nodeInfo?: (nodeId: number) => { trainCount: number; waitingCargo: number },
   ): void {
     const { ctx, canvas } = this;
+    const vb = this.getViewBounds(camera);
     camera.applyTransform(ctx, canvas);
 
     // エッジを先に描画する（ノードの下に）
-    const edges = graph.getAllEdges();
-    for (const edge of edges) {
-      this.renderEdge(edge);
+    for (const edge of graph.getAllEdges()) {
+      if (this.isEdgeVisible(edge, vb)) {
+        this.renderEdge(edge);
+      }
     }
 
     // 駅複合体の転線リンクを描画する（点線）
-    this.renderComplexLinks(graph);
+    this.renderComplexLinks(graph, vb);
 
     // ノードを上に描画する
-    const nodes = graph.getAllNodes();
-    for (const node of nodes) {
+    for (const node of graph.getAllNodes()) {
+      if (!this.isPointVisible(node.tileX, node.tileY, vb)) continue;
       const info = nodeInfo !== undefined ? nodeInfo(node.id) : { trainCount: 0, waitingCargo: 0 };
       this.renderNode(node, node.id === selectedNodeId, info.trainCount, info.waitingCargo);
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  private isPointVisible(tileX: number, tileY: number, vb: ViewBounds): boolean {
+    const wx = tileX * TILE_SIZE + HALF_TILE;
+    const wy = tileY * TILE_SIZE + HALF_TILE;
+    return wx >= vb.minWx && wx <= vb.maxWx && wy >= vb.minWy && wy <= vb.maxWy;
+  }
+
+  private isEdgeVisible(edge: GraphEdge, vb: ViewBounds): boolean {
+    // エッジのバウンディングボックスがビューと交差するか判定する
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of edge.path) {
+      const wx = p.x * TILE_SIZE;
+      const wy = p.y * TILE_SIZE;
+      if (wx < minX) minX = wx;
+      if (wy < minY) minY = wy;
+      if (wx > maxX) maxX = wx;
+      if (wy > maxY) maxY = wy;
+    }
+    return maxX >= vb.minWx && minX <= vb.maxWx && maxY >= vb.minWy && minY <= vb.maxWy;
   }
 
   renderPathPreview(path: readonly PathNode[], camera: Camera): void {
@@ -228,13 +272,13 @@ export class Renderer {
   }
 
   /** 駅複合体の転線リンクを点線で描画する */
-  private renderComplexLinks(graph: Graph): void {
+  private renderComplexLinks(graph: Graph, vb: ViewBounds): void {
     const { ctx } = this;
     const drawn = new Set<string>();
 
     for (const node of graph.getAllNodes()) {
+      if (!this.isPointVisible(node.tileX, node.tileY, vb)) continue;
       for (const adj of graph.getAdjacentStations(node.id)) {
-        // 重複描画を防ぐ
         const key = `${String(Math.min(node.id, adj.id))}:${String(Math.max(node.id, adj.id))}`;
         if (drawn.has(key)) continue;
         drawn.add(key);
@@ -422,11 +466,15 @@ export class Renderer {
 
   renderTrains(positions: readonly TrainPosition[], camera: Camera): void {
     const { ctx, canvas } = this;
+    const vb = this.getViewBounds(camera);
     camera.applyTransform(ctx, canvas);
 
     for (const pos of positions) {
-      let cx = pos.worldX * TILE_SIZE + HALF_TILE;
-      let cy = pos.worldY * TILE_SIZE + HALF_TILE;
+      const wx = pos.worldX * TILE_SIZE + HALF_TILE;
+      const wy = pos.worldY * TILE_SIZE + HALF_TILE;
+      if (wx < vb.minWx || wx > vb.maxWx || wy < vb.minWy || wy > vb.maxWy) continue;
+      let cx = wx;
+      let cy = wy;
 
       // 複線: 進行方向に対して右側にオフセット
       const hasDirX = pos.dirX !== 0;
@@ -556,18 +604,19 @@ export class Renderer {
     camera: Camera,
   ): void {
     const { ctx, canvas } = this;
+    const vb = this.getViewBounds(camera, TILE_SIZE * 5);
     camera.applyTransform(ctx, canvas);
     ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
 
-    // 駅名
     for (const node of graph.getAllNodes()) {
+      if (!this.isPointVisible(node.tileX, node.tileY, vb)) continue;
       const cx = node.tileX * TILE_SIZE + HALF_TILE;
       const cy = node.tileY * TILE_SIZE + HALF_TILE;
       this.drawLabel(node.name, cx, cy);
     }
 
-    // 街名
     for (const city of cities) {
+      if (!this.isPointVisible(city.tileX, city.tileY, vb)) continue;
       const cx = city.tileX * TILE_SIZE + HALF_TILE;
       const cy = city.tileY * TILE_SIZE + HALF_TILE;
       this.drawLabel(city.name, cx, cy + TILE_SIZE * 0.5 + 2, "top", "rgba(50, 100, 180, 0.8)");
@@ -614,9 +663,11 @@ export class Renderer {
     camera: Camera,
   ): void {
     const { ctx, canvas } = this;
+    const vb = this.getViewBounds(camera, TILE_SIZE * 15);
     camera.applyTransform(ctx, canvas);
 
     for (const city of cities) {
+      if (!this.isPointVisible(city.tileX, city.tileY, vb)) continue;
       const cx = city.tileX * TILE_SIZE + HALF_TILE;
       const cy = city.tileY * TILE_SIZE + HALF_TILE;
 
@@ -642,9 +693,11 @@ export class Renderer {
     camera: Camera,
   ): void {
     const { ctx, canvas } = this;
+    const vb = this.getViewBounds(camera);
     camera.applyTransform(ctx, canvas);
 
     for (const b of buildings) {
+      if (!this.isPointVisible(b.tileX, b.tileY, vb)) continue;
       const x = b.tileX * TILE_SIZE;
       const y = b.tileY * TILE_SIZE;
       ctx.fillStyle = BUILDING_COLORS[b.type] ?? "#888888";

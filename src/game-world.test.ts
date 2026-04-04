@@ -801,3 +801,344 @@ describe("GameWorld - 運行コスト", () => {
     expect(world.economy.money).toBeLessThan(afterPurchase);
   });
 });
+
+// --- 駅建設ツール ---
+
+describe("GameWorld - Station ツール", () => {
+  it("空き地に駅を建設できる", () => {
+    const world = createEmptyWorld();
+    world.toolMode = "station";
+    world.onTileClick(10, 10);
+
+    const node = world.graph.getNodeAt(10, 10);
+    expect(node).toBeDefined();
+  });
+
+  it("水上には駅を建設できない", () => {
+    const world = createEmptyWorld();
+    world.map.set(10, 10, { terrain: 2 }); // Water
+    world.toolMode = "station";
+    world.onTileClick(10, 10);
+
+    expect(world.graph.getNodeAt(10, 10)).toBeUndefined();
+    expect(world.toasts.length).toBeGreaterThan(0);
+  });
+
+  it("既存駅の上には建設できない", () => {
+    const world = createEmptyWorld();
+    world.graph.addNode(NodeKind.Station, 10, 10, "Existing");
+    const countBefore = [...world.graph.getAllNodes()].length;
+
+    world.toolMode = "station";
+    world.onTileClick(10, 10);
+
+    expect([...world.graph.getAllNodes()].length).toBe(countBefore);
+    expect(world.toasts.length).toBeGreaterThan(0);
+  });
+
+  it("隣接駅の横に建設すると複合体名が付く", () => {
+    const world = createEmptyWorld();
+    world.graph.addNode(NodeKind.Station, 10, 10, "TestSta");
+
+    world.toolMode = "station";
+    world.onTileClick(10, 11);
+
+    const nodes = [...world.graph.getAllNodes()];
+    const newNode = nodes.find((n) => n.tileX === 10 && n.tileY === 11);
+    expect(newNode).toBeDefined();
+    expect(newNode!.name).toContain("#");
+  });
+});
+
+// --- Rail ツール ---
+
+describe("GameWorld - Rail ツール", () => {
+  it("デバッグワールドで駅を選択して別の駅に接続できる", () => {
+    // デバッグワールドは平坦なので確実にパスが通る
+    const world = createDebugWorld();
+    // 新しい2駅を追加（既存線路と離れた場所に）
+    const s1 = world.graph.addNode(NodeKind.Station, 5, 5, "X");
+    const s2 = world.graph.addNode(NodeKind.Station, 12, 5, "Y");
+
+    world.toolMode = "rail";
+    world.onTileClick(5, 5);
+    expect(world.selectedNodeId).toBe(s1.id);
+
+    world.onTileClick(12, 5);
+    expect(world.graph.getEdgesFor(s1.id).length).toBe(1);
+    expect(world.graph.getEdgesFor(s2.id).length).toBe(1);
+  });
+
+  it("同じ駅をクリックすると選択解除", () => {
+    const world = createDebugWorld();
+    const nodes = [...world.graph.getAllNodes()];
+    const station = nodes[0]!;
+
+    world.toolMode = "rail";
+    world.onTileClick(station.tileX, station.tileY);
+    expect(world.selectedNodeId).toBe(station.id);
+
+    world.onTileClick(station.tileX, station.tileY);
+    expect(world.selectedNodeId).toBeNull();
+  });
+
+  it("空タイルクリックで駅未選択時は何もしない", () => {
+    const world = createDebugWorld();
+    world.toolMode = "rail";
+    world.onTileClick(1, 1);
+    expect(world.selectedNodeId).toBeNull();
+    expect(world.railWaypoints).toHaveLength(0);
+  });
+});
+
+// --- connectNodesViaWaypoints ---
+
+describe("GameWorld - connectNodesViaWaypoints", () => {
+  it("既に接続済みの2駅は接続できない", () => {
+    const world = createEmptyWorld();
+    const s1 = world.graph.addNode(NodeKind.Station, 5, 5, "A");
+    const s2 = world.graph.addNode(NodeKind.Station, 15, 5, "B");
+    world.graph.addEdge(s1.id, s2.id, [
+      { x: 5, y: 5 }, { x: 10, y: 5 }, { x: 15, y: 5 },
+    ]);
+
+    const error = world.connectNodesViaWaypoints(s1.id, s2.id);
+    expect(error).toContain("既に接続");
+  });
+
+  it("2方向接続済みの駅からは接続できない", () => {
+    const world = createEmptyWorld();
+    const s1 = world.graph.addNode(NodeKind.Station, 5, 5, "A");
+    world.graph.addNode(NodeKind.Station, 15, 5, "B");
+    const s3 = world.graph.addNode(NodeKind.Station, 5, 15, "C");
+    const s4 = world.graph.addNode(NodeKind.Station, 25, 5, "D");
+    world.graph.addEdge(s1.id, s1.id + 1, [
+      { x: 5, y: 5 }, { x: 10, y: 5 }, { x: 15, y: 5 },
+    ]);
+    world.graph.addEdge(s1.id, s3.id, [
+      { x: 5, y: 5 }, { x: 5, y: 10 }, { x: 5, y: 15 },
+    ]);
+
+    const error = world.connectNodesViaWaypoints(s1.id, s4.id);
+    expect(error).toContain("2方向接続済み");
+  });
+});
+
+// --- setTrainCars ---
+
+describe("GameWorld - setTrainCars", () => {
+  it("既存列車の車両構成を変更できる", () => {
+    const { world, routeId } = createWorldWithRoute();
+    world.sim.addTrain(routeId, world.graph, ["loco_steam", "car_passenger_2nd"], 3.0, 50);
+
+    const train = world.sim.getAllTrains()[0]!;
+    const error = world.setTrainCars(train.id, ["loco_diesel", "car_freight", "car_freight"]);
+    expect(error).toBeNull();
+    expect(train.cars).toEqual(["loco_diesel", "car_freight", "car_freight"]);
+    expect(train.cargoCapacity).toBe(120);
+  });
+
+  it("動力車なしに変更はできない", () => {
+    const { world, routeId } = createWorldWithRoute();
+    world.sim.addTrain(routeId, world.graph, ["loco_steam", "car_passenger_2nd"], 3.0, 50);
+
+    const train = world.sim.getAllTrains()[0]!;
+    const error = world.setTrainCars(train.id, ["car_passenger_2nd", "car_passenger_2nd"]);
+    expect(error).toBe("動力車がありません");
+  });
+
+  it("容量超過時に貨物を駅に降ろす", () => {
+    const { world, routeId, s2Id } = createWorldWithRoute();
+    world.sim.addTrain(routeId, world.graph, ["loco_steam", "car_passenger_2nd", "car_passenger_2nd"], 3.0, 100);
+
+    const train = world.sim.getAllTrains()[0]!;
+    // 貨物を積ませる
+    train.cargo = [{ resource: Resource.Passengers, destinationNodeId: s2Id, amount: 80 }];
+
+    // 容量を50に縮小
+    const error = world.setTrainCars(train.id, ["loco_steam", "car_passenger_2nd"]);
+    expect(error).toBeNull();
+
+    // 列車の貨物は容量以下
+    let totalCargo = 0;
+    for (const item of train.cargo) {
+      totalCargo += item.amount;
+    }
+    expect(totalCargo).toBeLessThanOrEqual(50);
+
+    // 超過分は駅に降ろされている
+    expect(world.economy.getTotalWaiting(train.nodeId)).toBeGreaterThan(0);
+  });
+});
+
+// --- addCarToRoute / removeCarFromRoute ---
+
+describe("GameWorld - 路線車両操作", () => {
+  it("路線に車両を追加できる", () => {
+    const { world, routeId } = createWorldWithRoute();
+    world.addCarToRoute(routeId, "loco_steam");
+    world.addCarToRoute(routeId, "car_passenger_2nd");
+
+    const route = world.sim.getRoute(routeId)!;
+    expect(route.cars).toEqual(["loco_steam", "car_passenger_2nd"]);
+  });
+
+  it("路線から車両を削除できる", () => {
+    const { world, routeId } = createWorldWithRoute();
+    world.addCarToRoute(routeId, "loco_steam");
+    world.addCarToRoute(routeId, "car_passenger_2nd");
+    world.addCarToRoute(routeId, "car_freight");
+
+    world.removeCarFromRoute(routeId, 1);
+    const route = world.sim.getRoute(routeId)!;
+    expect(route.cars).toEqual(["loco_steam", "car_freight"]);
+  });
+});
+
+// --- buildRouteConnections 追加テスト ---
+
+describe("GameWorld - buildRouteConnections 追加", () => {
+  it("3路線の乗り継ぎで全駅到達可能", () => {
+    const world = createEmptyWorld();
+
+    const a = world.graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b = world.graph.addNode(NodeKind.Station, 10, 0, "B");
+    const c = world.graph.addNode(NodeKind.Station, 20, 0, "C");
+    const d = world.graph.addNode(NodeKind.Station, 30, 0, "D");
+
+    world.sim.addRoute([a.id, b.id], RouteMode.Shuttle);
+    world.sim.addRoute([b.id, c.id], RouteMode.Shuttle);
+    world.sim.addRoute([c.id, d.id], RouteMode.Shuttle);
+
+    const conns = world.buildRouteConnections();
+    // AからDに到達可能（3路線乗り継ぎ）
+    expect(conns.get(a.id) ?? []).toContain(d.id);
+    expect(conns.get(d.id) ?? []).toContain(a.id);
+  });
+
+  it("路線なしの駅は接続マップに含まれない", () => {
+    const world = createEmptyWorld();
+    world.graph.addNode(NodeKind.Station, 0, 0, "Isolated");
+
+    const conns = world.buildRouteConnections();
+    expect(conns.size).toBe(0);
+  });
+});
+
+// --- Inspect ツール ---
+
+describe("GameWorld - Inspect ツール", () => {
+  it("駅クリックで openInspectTiles に追加される", () => {
+    const world = createDebugWorld();
+    world.toolMode = "inspect";
+    world.onTileClick(10, 20); // Farmville Sta.
+
+    expect(world.openInspectTiles).toHaveLength(1);
+    expect(world.openInspectTiles[0]).toEqual({ x: 10, y: 20 });
+  });
+
+  it("同じタイルを再クリックで閉じる", () => {
+    const world = createDebugWorld();
+    world.toolMode = "inspect";
+    world.onTileClick(10, 20);
+    expect(world.openInspectTiles).toHaveLength(1);
+
+    world.onTileClick(10, 20);
+    expect(world.openInspectTiles).toHaveLength(0);
+  });
+
+  it("複数タイルを同時に開ける", () => {
+    const world = createDebugWorld();
+    world.toolMode = "inspect";
+    world.onTileClick(10, 20);
+    world.onTileClick(50, 21);
+
+    expect(world.openInspectTiles).toHaveLength(2);
+  });
+
+  it("buildInspectInfoAt で都市の情報を取得できる", () => {
+    const world = createDebugWorld();
+    // Farmville の中心座標付近
+    const info = world.buildInspectInfoAt(10, 20);
+    expect(info.type).toBe("node");
+    expect(info.nodeName).toBe("Farmville Sta.");
+  });
+
+  it("buildInspectInfoAt で空タイルの地形情報を返す", () => {
+    // デバッグワールド（64x64、全平坦）の空きタイルを使う
+    const world = createDebugWorld();
+    const info = world.buildInspectInfoAt(1, 1);
+    expect(info.type).toBe("terrain");
+    expect(info.terrain).toBe("Flat");
+  });
+
+  it("buildInspectInfoAt で建物情報を返す", () => {
+    const world = createDebugWorld();
+    // Farm は (8, 20)
+    const info = world.buildInspectInfoAt(8, 20);
+    expect(info.buildingType).toBe("Farm");
+    expect(info.buildingProduces).toBe("Rice");
+  });
+});
+
+// --- 列車の openTrainDetail / closeTrainDetail ---
+
+describe("GameWorld - 列車詳細の開閉", () => {
+  it("toggleTrainDetail で開閉できる", () => {
+    const world = createDebugWorld();
+    const train = world.sim.getAllTrains()[0]!;
+
+    world.toggleTrainDetail(train.id);
+    expect(world.openTrainIds).toContain(train.id);
+
+    world.toggleTrainDetail(train.id);
+    expect(world.openTrainIds).not.toContain(train.id);
+  });
+
+  it("複数列車を同時に開ける", () => {
+    const world = createDebugWorld();
+    const trains = world.sim.getAllTrains();
+
+    world.openTrainDetail(trains[0]!.id);
+    world.openTrainDetail(trains[1]!.id);
+    expect(world.openTrainIds).toHaveLength(2);
+  });
+
+  it("同じ列車を二重に開かない", () => {
+    const world = createDebugWorld();
+    const train = world.sim.getAllTrains()[0]!;
+
+    world.openTrainDetail(train.id);
+    world.openTrainDetail(train.id);
+    expect(world.openTrainIds).toHaveLength(1);
+  });
+});
+
+// --- スナップショット詳細 ---
+
+describe("GameWorld - スナップショット詳細", () => {
+  it("列車の routeName が正しい", () => {
+    const world = createDebugWorld();
+    const snap = world.getSnapshot();
+    const train = snap.trains[0]!;
+    expect(train.routeName).not.toBe("?");
+    expect(train.routeName.length).toBeGreaterThan(0);
+  });
+
+  it("路線の consistStats が計算されている", () => {
+    const world = createDebugWorld();
+    const snap = world.getSnapshot();
+    const route = snap.routes[0]!;
+    expect(route.consistStats).not.toBeNull();
+    expect(route.consistStats!.hasPower).toBe(true);
+  });
+
+  it("openInspectTiles がスナップショットに含まれる", () => {
+    const world = createDebugWorld();
+    world.toolMode = "inspect";
+    world.onTileClick(10, 20);
+
+    const snap = world.getSnapshot();
+    expect(snap.openInspectTiles).toHaveLength(1);
+  });
+});

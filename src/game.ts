@@ -26,7 +26,7 @@ export { parseConfigFromURL } from "./game-url.js";
 
 export type GameEventListener = () => void;
 
-const MAP_SIZE = 256;
+const MAP_SIZE = 512;
 
 /**
  * Game: GameWorld（純粋ロジック）+ レンダリング・入力・カメラのブラウザ層
