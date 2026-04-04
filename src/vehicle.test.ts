@@ -10,23 +10,24 @@ describe("Vehicle - カタログ", () => {
   it("全車両タイプが取得できる", () => {
     expect(getVehicleType("loco_steam")).toBeDefined();
     expect(getVehicleType("loco_diesel")).toBeDefined();
-    expect(getVehicleType("car_passenger")).toBeDefined();
+    expect(getVehicleType("car_passenger_2nd")).toBeDefined();
+    expect(getVehicleType("car_passenger_1st")).toBeDefined();
     expect(getVehicleType("car_freight")).toBeDefined();
-    expect(getVehicleType("car_express")).toBeDefined();
+    expect(getVehicleType("loco_express")).toBeDefined();
   });
 
   it("存在しない車両タイプは undefined", () => {
     expect(getVehicleType("nonexistent")).toBeUndefined();
   });
 
-  it("カタログに5種類ある", () => {
-    expect(VEHICLE_CATALOG.length).toBe(5);
+  it("カタログに6種類ある", () => {
+    expect(VEHICLE_CATALOG.length).toBe(6);
   });
 });
 
 describe("Vehicle - 性能算出", () => {
   it("機関車+客車2両の編成", () => {
-    const stats = calcConsistStats(["loco_steam", "car_passenger", "car_passenger"]);
+    const stats = calcConsistStats(["loco_steam", "car_passenger_2nd", "car_passenger_2nd"]);
     expect(stats).not.toBeNull();
     const s = stats!;
 
@@ -36,10 +37,10 @@ describe("Vehicle - 性能算出", () => {
     expect(s.totalPower).toBe(300);
     // 総重量 = 80 + 20 + 20 = 120
     expect(s.totalWeight).toBe(120);
-    // 容量 = 40 + 40 = 80（旅客）
-    expect(s.capacity.get(Resource.Passengers)).toBe(80);
-    // 購入費 = 500 + 100 + 100 = 700
-    expect(s.purchaseCost).toBe(700);
+    // 容量 = 50 + 50 = 100（旅客）
+    expect(s.capacity.get(Resource.Passengers)).toBe(100);
+    // 購入費 = 500 + 80 + 80 = 660
+    expect(s.purchaseCost).toBe(660);
     // 運行費 = 3 + 1 + 1 = 5
     expect(s.runningCost).toBe(5);
     // 動力あり
@@ -61,20 +62,24 @@ describe("Vehicle - 性能算出", () => {
     expect(s.totalCapacity).toBe(180);
   });
 
-  it("特急車両のみの電車編成", () => {
-    const stats = calcConsistStats(["car_express", "car_express", "car_express"]);
+  it("特急機関車+1等客車の編成", () => {
+    const stats = calcConsistStats(["loco_express", "car_passenger_1st", "car_passenger_1st"]);
     expect(stats).not.toBeNull();
     const s = stats!;
 
-    // 動力付き客車なので機関車不要
     expect(s.hasPower).toBe(true);
+    // 出力 = 600
     expect(s.totalPower).toBe(600);
+    // 最高速度 = min(8.0, 8.0, 8.0) = 8.0
     expect(s.maxSpeed).toBe(8.0);
-    expect(s.capacity.get(Resource.Passengers)).toBe(75);
+    // 容量 = 30 + 30 = 60（旅客）
+    expect(s.capacity.get(Resource.Passengers)).toBe(60);
+    // 重量 = 50 + 22 + 22 = 94
+    expect(s.totalWeight).toBe(94);
   });
 
   it("動力車なしの編成は hasPower=false", () => {
-    const stats = calcConsistStats(["car_passenger", "car_freight"]);
+    const stats = calcConsistStats(["car_passenger_2nd", "car_freight"]);
     expect(stats).not.toBeNull();
     const s = stats!;
 

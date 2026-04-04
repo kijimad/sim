@@ -22,6 +22,7 @@ interface GameUIProps {
 
 const toolOptions = [
   { value: ToolMode.Inspect, label: "Inspect", icon: <SearchOutlined /> },
+  { value: ToolMode.Station, label: "Station", icon: <ToolOutlined /> },
   { value: ToolMode.Rail, label: "Rail", icon: <ToolOutlined /> },
 ];
 
@@ -136,14 +137,22 @@ export function GameUI({ game }: GameUIProps) {
             </FloatingWindow>
           )}
 
+          {snap.toolMode === ToolMode.Station && (
+            <FloatingWindow title="Station" onClose={() => { game.setToolMode(ToolMode.Inspect); }} defaultX={320} defaultY={60} width={240}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Click empty tile to place a station
+              </Text>
+            </FloatingWindow>
+          )}
+
           {snap.toolMode === ToolMode.Rail && (
             <FloatingWindow title="Rail" onClose={() => { game.setToolMode(ToolMode.Inspect); }} defaultX={320} defaultY={60} width={260}>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 {snap.selectedNodeId !== null
                   ? snap.railWaypointCount > 0
                     ? `${String(snap.railWaypointCount)} waypoint(s). Click station to connect, or empty tile for more`
-                    : "Click empty tile for waypoint, or station to connect"
-                  : "Click station to select, or empty tile to place"}
+                    : "Click station to connect, or empty tile for waypoint"
+                  : "Click a station to start"}
               </Text>
             </FloatingWindow>
           )}

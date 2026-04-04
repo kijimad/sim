@@ -25,17 +25,12 @@ export interface GameConfig {
 
 export const ToolMode = {
   Inspect: "inspect",
+  Station: "station",
   Rail: "rail",
   Route: "route",
 } as const;
 
 export type ToolMode = (typeof ToolMode)[keyof typeof ToolMode];
-
-export const RailSubMode = {
-  Station: "station",
-} as const;
-
-export type RailSubMode = (typeof RailSubMode)[keyof typeof RailSubMode];
 
 export interface RouteInfo {
   readonly id: number;
@@ -123,7 +118,6 @@ export interface ConsistPresetInfo {
 
 export interface GameSnapshot {
   readonly toolMode: ToolMode;
-  readonly railSubMode: RailSubMode;
   readonly selectedNodeId: number | null;
   readonly railWaypointCount: number;
   readonly routeStops: readonly number[];
@@ -157,7 +151,6 @@ export class GameWorld {
   readonly map: TileMap;
 
   toolMode: ToolMode = ToolMode.Inspect;
-  railSubMode: RailSubMode = RailSubMode.Station;
   railWaypoints: { x: number; y: number }[] = [];
   selectedNodeId: number | null = null;
   routeStops: number[] = [];
@@ -338,7 +331,6 @@ export class GameWorld {
   getSnapshot(): GameSnapshot {
     return {
       toolMode: this.toolMode,
-      railSubMode: this.railSubMode,
       selectedNodeId: this.selectedNodeId,
       railWaypointCount: this.railWaypoints.length,
       routeStops: [...this.routeStops],
@@ -530,9 +522,6 @@ export class GameWorld {
     this.railWaypoints = [];
   }
 
-  setRailSubMode(mode: RailSubMode): void {
-    this.railSubMode = mode;
-  }
 
   openTrainDetail(trainId: number): void {
     if (!this.openTrainIds.includes(trainId)) {
@@ -853,17 +842,20 @@ export class GameWorld {
     this.inspectTileX = tileX;
     this.inspectTileY = tileY;
 
-    if (this.toolMode === ToolMode.Inspect) {
-      this.toggleInspectDetail(tileX, tileY);
-      return;
+    switch (this.toolMode) {
+      case ToolMode.Inspect:
+        this.toggleInspectDetail(tileX, tileY);
+        break;
+      case ToolMode.Route:
+        this.handleRouteClick(tileX, tileY);
+        break;
+      case ToolMode.Station:
+        this.handleStationClick(tileX, tileY);
+        break;
+      case ToolMode.Rail:
+        this.handleRailClick(tileX, tileY);
+        break;
     }
-
-    if (this.toolMode === ToolMode.Route) {
-      this.handleRouteClick(tileX, tileY);
-      return;
-    }
-
-    this.handleBuildClick(tileX, tileY);
   }
 
   onKeyPress(key: string): void {
@@ -872,10 +864,12 @@ export class GameWorld {
         this.setToolMode(ToolMode.Inspect);
         break;
       case "1":
-        this.setToolMode(ToolMode.Rail);
-        this.railSubMode = RailSubMode.Station;
+        this.setToolMode(ToolMode.Station);
         break;
       case "2":
+        this.setToolMode(ToolMode.Rail);
+        break;
+      case "3":
         this.setToolMode(ToolMode.Route);
         break;
       case "t":
@@ -900,7 +894,31 @@ export class GameWorld {
     this.selectedNodeId = node.id;
   }
 
-  private handleBuildClick(tileX: number, tileY: number): void {
+  /** 駅建設ツール: 空き地に駅を配置する */
+  private handleStationClick(tileX: number, tileY: number): void {
+    if (this.graph.getNodeAt(tileX, tileY) !== undefined) {
+      this.showToast("既に駅があります");
+      return;
+    }
+    if (this.map.get(tileX, tileY).terrain === Terrain.Water) {
+      this.showToast("水上には建設できません");
+      return;
+    }
+    if (this.isOnEdgePath(tileX, tileY)) {
+      this.showToast("線路上には駅を建設できません");
+      return;
+    }
+    const perpError = this.checkPerpendicularPlacement(tileX, tileY);
+    if (perpError !== null) {
+      this.showToast(perpError);
+      return;
+    }
+    const { kind, name } = this.makeNodeInfo(tileX, tileY);
+    this.graph.addNode(kind, tileX, tileY, name);
+  }
+
+  /** 線路敷設ツール: 駅を選択して線路で接続する */
+  private handleRailClick(tileX: number, tileY: number): void {
     const existing = this.graph.getNodeAt(tileX, tileY);
 
     if (existing !== undefined) {
@@ -956,20 +974,6 @@ export class GameWorld {
         }
 
         this.railWaypoints.push({ x: tileX, y: tileY });
-      } else {
-        if (this.isOnEdgePath(tileX, tileY)) {
-          this.showToast("線路上には駅を建設できません");
-          return;
-        }
-
-        const perpError = this.checkPerpendicularPlacement(tileX, tileY);
-        if (perpError !== null) {
-          this.showToast(perpError);
-          return;
-        }
-
-        const { kind, name } = this.makeNodeInfo(tileX, tileY);
-        this.graph.addNode(kind, tileX, tileY, name);
       }
     }
   }
@@ -1277,71 +1281,70 @@ export class GameWorld {
   // --- デバッグワールド ---
 
   private setupDebugWorld(): void {
-    // メインライン: 田園 - 中央複合体 - 港町
-    const a = this.graph.addNode(NodeKind.Station, 10, 20, "田園駅");
-    const b1 = this.graph.addNode(NodeKind.Station, 30, 20, "中央駅 #1");
-    const b2 = this.graph.addNode(NodeKind.Station, 30, 21, "中央駅 #2");
-    const e = this.graph.addNode(NodeKind.Station, 50, 21, "港町駅");
+    // Main line: Farmville - Central complex - Portside
+    const a = this.graph.addNode(NodeKind.Station, 10, 20, "Farmville Sta.");
+    const b1 = this.graph.addNode(NodeKind.Station, 30, 20, "Central Sta. #1");
+    const b2 = this.graph.addNode(NodeKind.Station, 30, 21, "Central Sta. #2");
+    const e = this.graph.addNode(NodeKind.Station, 50, 21, "Portside Sta.");
 
     this.connectNodes(a.id, b1.id);
     this.connectNodes(b2.id, e.id);
 
-    // 支線: 鉱山口 - 山手複合体 - 工業団地 - 南港
-    const c = this.graph.addNode(NodeKind.Station, 10, 40, "鉱山口駅");
-    const d1 = this.graph.addNode(NodeKind.Station, 30, 40, "山手駅 #1");
-    const d2 = this.graph.addNode(NodeKind.Station, 30, 41, "山手駅 #2");
-    const f = this.graph.addNode(NodeKind.Station, 50, 41, "工業団地駅");
-    const g = this.graph.addNode(NodeKind.Station, 50, 50, "南港駅");
+    // Branch line: Minegate - Hillside complex - Industrial Park - South Harbor
+    const c = this.graph.addNode(NodeKind.Station, 10, 40, "Minegate Sta.");
+    const d1 = this.graph.addNode(NodeKind.Station, 30, 40, "Hillside Sta. #1");
+    const d2 = this.graph.addNode(NodeKind.Station, 30, 41, "Hillside Sta. #2");
+    const f = this.graph.addNode(NodeKind.Station, 50, 41, "Industrial Park Sta.");
+    const g = this.graph.addNode(NodeKind.Station, 50, 50, "South Harbor Sta.");
 
     this.connectNodes(c.id, d1.id);
     this.connectNodes(d2.id, f.id);
     this.connectNodes(f.id, g.id);
 
-    // 縦断線: 中央#2 - 中央連絡 - 山手#1（左側にS字で結ぶ）
-    const mid = this.graph.addNode(NodeKind.Station, 28, 30, "中央連絡駅");
+    // Cross line: Central #2 - Junction - Hillside #1
+    const mid = this.graph.addNode(NodeKind.Station, 28, 30, "Central Junction");
     this.connectNodes(b2.id, mid.id, [{ x: 29, y: 21 }, { x: 28, y: 21 }, { x: 28, y: 29 }]);
     this.connectNodes(mid.id, d1.id, [{ x: 28, y: 31 }, { x: 28, y: 39 }, { x: 31, y: 39 }, { x: 31, y: 40 }]);
 
-    // 編成プリセットを作成する
-    const passengerConsist = this.addConsistPreset("普通旅客", ["loco_steam", "car_passenger", "car_passenger"]);
-    const freightConsist = this.addConsistPreset("貨物列車", ["loco_diesel", "car_freight", "car_freight", "car_freight"]);
-    const expressConsist = this.addConsistPreset("特急", ["car_express", "car_express", "car_express"]);
-    const localConsist = this.addConsistPreset("縦断ローカル", ["loco_steam", "car_passenger"]);
+    // Consist presets
+    const passengerConsist = this.addConsistPreset("Local Passenger", ["loco_steam", "car_passenger_2nd", "car_passenger_2nd"]);
+    const freightConsist = this.addConsistPreset("Freight Train", ["loco_diesel", "car_freight", "car_freight", "car_freight"]);
+    const expressConsist = this.addConsistPreset("Express", ["loco_express", "car_passenger_1st", "car_passenger_1st"]);
+    const localConsist = this.addConsistPreset("Cross Local", ["loco_steam", "car_passenger_2nd"]);
 
-    // 初期資金を設定する
+    // Initial funds
     this.economy.deductRunningCost(-5000);
 
-    // 田園〜港町線: 旅客編成
-    const route1 = this.sim.addRoute([a.id, b1.id, e.id], RouteMode.Shuttle, "田園〜港町線");
+    // Farmville - Portside Line
+    const route1 = this.sim.addRoute([a.id, b1.id, e.id], RouteMode.Shuttle, "Farmville - Portside Line");
     if (passengerConsist !== null) {
       this.applyPresetToRoute(route1.id, passengerConsist.id);
     }
     this.addTrain(route1.id);
     this.addTrain(route1.id);
 
-    // 鉱山口〜南港線: 貨物編成
-    const route2 = this.sim.addRoute([c.id, d1.id, g.id], RouteMode.Shuttle, "鉱山口〜南港線");
+    // Minegate - South Harbor Line
+    const route2 = this.sim.addRoute([c.id, d1.id, g.id], RouteMode.Shuttle, "Minegate - South Harbor Line");
     if (freightConsist !== null) {
       this.applyPresetToRoute(route2.id, freightConsist.id);
     }
     this.addTrain(route2.id);
 
-    // 縦断線: ローカル編成
-    const route3 = this.sim.addRoute([b2.id, mid.id, d1.id], RouteMode.Shuttle, "縦断線");
+    // Cross Line
+    const route3 = this.sim.addRoute([b2.id, mid.id, d1.id], RouteMode.Shuttle, "Cross Line");
     if (localConsist !== null) {
       this.applyPresetToRoute(route3.id, localConsist.id);
     }
     this.addTrain(route3.id);
 
-    // 特急プリセットは未使用だが選択可能な状態にしておく
     void expressConsist;
 
     this.lastRouteId = route1.id;
 
-    // 都市と建物を配置
-    this.economy.addCity("田園町", 10, 20, 5);
-    this.economy.addCity("港町", 50, 21, 5);
-    this.economy.addCity("鉱山町", 10, 40, 5);
+    // Cities and buildings
+    this.economy.addCity("Farmville", 10, 20, 5);
+    this.economy.addCity("Portside", 50, 21, 5);
+    this.economy.addCity("Minegate", 10, 40, 5);
 
     this.economy.addBuilding(BuildingType.Farm, 8, 20);
     this.economy.addBuilding(BuildingType.Commercial, 48, 21);

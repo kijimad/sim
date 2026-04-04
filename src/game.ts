@@ -1,5 +1,5 @@
 import { Camera } from "./camera.js";
-import type { GameConfig, GameSnapshot, ToolMode, RailSubMode } from "./game-world.js";
+import type { GameConfig, GameSnapshot, ToolMode } from "./game-world.js";
 import { GameWorld } from "./game-world.js";
 import type { RouteMode } from "./simulation.js";
 import { InputHandler } from "./input.js";
@@ -19,7 +19,6 @@ export type {
 
 export {
   ToolMode,
-  RailSubMode,
   GameWorld,
 } from "./game-world.js";
 
@@ -190,10 +189,6 @@ export class Game {
     this.notify();
   }
 
-  setRailSubMode(mode: RailSubMode): void {
-    this.world.setRailSubMode(mode);
-    this.notify();
-  }
 
   addTrain(routeId?: number): void {
     const error = this.world.addTrain(routeId);
