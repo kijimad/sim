@@ -6,11 +6,23 @@ export interface PathNode {
   readonly y: number;
 }
 
-const TERRAIN_COST: Record<Terrain, number> = {
+export const TERRAIN_COST: Record<Terrain, number> = {
   [Terrain.Flat]: 1,
   [Terrain.Mountain]: 5,
   [Terrain.Water]: Infinity,
 };
+
+/** パスの建設コストを計算する */
+export function calcPathCost(map: TileMap, path: readonly PathNode[]): number {
+  let cost = 0;
+  for (const p of path) {
+    if (map.inBounds(p.x, p.y)) {
+      const tc = TERRAIN_COST[map.get(p.x, p.y).terrain];
+      cost += tc === Infinity ? 0 : tc;
+    }
+  }
+  return cost;
+}
 
 function heuristic(ax: number, ay: number, bx: number, by: number): number {
   const dx = Math.abs(ax - bx);

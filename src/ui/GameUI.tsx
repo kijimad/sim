@@ -156,6 +156,16 @@ export function GameUI({ game }: GameUIProps) {
                     : "Click station to connect, or empty tile for waypoint"
                   : "Click a station to start"}
               </Text>
+              {snap.previewPathLength > 0 && (
+                <div style={{ marginTop: 8, display: "flex", gap: 16 }}>
+                  <Statistic title={<Text type="secondary" style={{ fontSize: 10 }}>Length</Text>}
+                    value={snap.previewPathLength} suffix="tiles"
+                    styles={{ content: { fontSize: 14, color: "#fff" } }} />
+                  <Statistic title={<Text type="secondary" style={{ fontSize: 10 }}>Cost</Text>}
+                    value={snap.previewPathCost} prefix="$"
+                    styles={{ content: { fontSize: 14, color: "#fff" } }} />
+                </div>
+              )}
             </FloatingWindow>
           )}
 

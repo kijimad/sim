@@ -2,7 +2,7 @@ import { BuildingType, Economy, Resource, generateCities } from "./economy.js";
 
 import type { GraphNode } from "./graph.js";
 import { Graph, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
-import { findPath } from "./pathfinding.js";
+import { findPath, calcPathCost } from "./pathfinding.js";
 import { ROUTE_MODE_NAMES, RouteMode, Simulation, TrainState } from "./simulation.js";
 import { generateTerrain } from "./terrain.js";
 import { TileMap } from "./tilemap.js";
@@ -150,6 +150,8 @@ export interface GameSnapshot {
   readonly openTrainIds: readonly number[];
   readonly openRouteIds: readonly number[];
   readonly openInspectTiles: readonly { x: number; y: number }[];
+  readonly previewPathCost: number;
+  readonly previewPathLength: number;
   readonly inspect: InspectInfo;
   readonly toasts: readonly Toast[];
   readonly consistPresets: readonly ConsistPresetInfo[];
@@ -176,6 +178,8 @@ export class GameWorld {
   inspectTileY: number | null = null;
   openTrainIds: number[] = [];
   openRouteIds: number[] = [];
+  lastPreviewPathCost = 0;
+  lastPreviewPathLength = 0;
   openInspectTiles: { x: number; y: number }[] = [];
 
   toasts: Toast[] = [];
@@ -410,6 +414,8 @@ export class GameWorld {
       openTrainIds: [...this.openTrainIds],
       openRouteIds: [...this.openRouteIds],
       openInspectTiles: [...this.openInspectTiles],
+      previewPathCost: this.lastPreviewPathCost,
+      previewPathLength: this.lastPreviewPathLength,
       inspect: this.buildInspectInfo(),
       toasts: [...this.toasts],
       consistPresets: [...this.consistPresets.values()].map((p) => ({
@@ -1184,6 +1190,8 @@ export class GameWorld {
         fullPath.push(...segment);
       }
     }
+    this.lastPreviewPathLength = fullPath.length;
+    this.lastPreviewPathCost = calcPathCost(this.map, fullPath);
     return fullPath;
   }
 
