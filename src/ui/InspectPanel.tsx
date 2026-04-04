@@ -75,17 +75,12 @@ function EdgeInfo({ info, game }: { info: InspectInfo; game: Game }) {
 export function InspectPanel({ info, game }: InspectPanelProps) {
   if (info.type === "none") {
     return (
-      <div className="inspect-panel">
-        <div className="panel-header">Inspect</div>
-        <div className="inspect-hint">Click on the map to inspect</div>
-      </div>
+      <div className="inspect-hint">Click on the map to inspect</div>
     );
   }
 
   return (
-    <div className="inspect-panel">
-      <div className="panel-header">Inspect</div>
-      <div className="inspect-content">
+    <div className="inspect-content">
         {info.tileX !== undefined && info.tileY !== undefined && (
           <div className="inspect-row">
             <span className="inspect-label">Tile</span>
@@ -224,6 +219,5 @@ export function InspectPanel({ info, game }: InspectPanelProps) {
           <EdgeInfo info={info} game={game} />
         )}
       </div>
-    </div>
   );
 }

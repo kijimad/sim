@@ -9,6 +9,8 @@ import { TileMap } from "./tilemap.js";
 import { TERRAIN_NAMES, Terrain } from "./types.js";
 import { BUILDING_TYPE_NAMES, RESOURCE_NAMES } from "./economy.js";
 import { NODE_KIND_NAMES } from "./graph.js";
+import { calcConsistStats } from "./vehicle.js";
+import type { ConsistStats } from "./vehicle.js";
 
 // --- 定数 ---
 
@@ -47,8 +49,12 @@ export interface RouteInfo {
 export interface TrainInfo {
   readonly id: number;
   readonly routeId: number;
+  readonly routeName: string;
   readonly state: string;
   readonly targetStop: string;
+  readonly speed: number;
+  readonly cars: readonly string[];
+  readonly cargoCapacity: number;
   readonly cargoTotal: number;
   readonly cargoDetail: readonly { resource: string; amount: number }[];
 }
@@ -98,6 +104,21 @@ export interface FloatingText {
   time: number;
 }
 
+// --- 編成プリセット ---
+
+export interface ConsistPreset {
+  readonly id: number;
+  name: string;
+  readonly cars: readonly string[];
+}
+
+export interface ConsistPresetInfo {
+  readonly id: number;
+  readonly name: string;
+  readonly cars: readonly string[];
+  readonly stats: ConsistStats | null;
+}
+
 export interface GameSnapshot {
   readonly toolMode: ToolMode;
   readonly railSubMode: RailSubMode;
@@ -114,8 +135,10 @@ export interface GameSnapshot {
   readonly routes: readonly RouteInfo[];
   readonly totalPopulation: number;
   readonly trains: readonly TrainInfo[];
+  readonly openTrainIds: readonly number[];
   readonly inspect: InspectInfo;
   readonly toasts: readonly Toast[];
+  readonly consistPresets: readonly ConsistPresetInfo[];
   readonly debug: boolean;
   readonly seed: number;
 }
@@ -138,9 +161,13 @@ export class GameWorld {
   editingRouteId: number | null = null;
   inspectTileX: number | null = null;
   inspectTileY: number | null = null;
+  openTrainIds: number[] = [];
 
   toasts: Toast[] = [];
   floatingTexts: FloatingText[] = [];
+
+  private consistPresets = new Map<number, ConsistPreset>();
+  private nextPresetId = 1;
 
   private stationCount = 0;
   private nextToastId = 1;
@@ -166,8 +193,67 @@ export class GameWorld {
       const route = this.sim.getRoute(train.routeId);
       const routeStops = route?.stops ?? [];
       const complexIds = this.graph.getStationComplex(nodeId).map((n) => n.id);
-      const { earned, newCargo } = this.economy.trainArrive(complexIds, train.cargo, this.graph, routeStops);
-      train.cargo = newCargo;
+
+      // 路線接続で到達可能な全目的地を算出する（乗り換え含む）
+      const routeConns = this.buildRouteConnections();
+      const reachableFromRoute = new Set<number>();
+      for (const stopId of routeStops) {
+        reachableFromRoute.add(stopId);
+        const conns = routeConns.get(stopId);
+        if (conns !== undefined) {
+          for (const c of conns) {
+            reachableFromRoute.add(c);
+          }
+        }
+      }
+
+      // 配達 + 積載（到達可能な目的地の貨物を積む）
+      const { earned, newCargo } = this.economy.trainArrive(
+        complexIds, train.cargo, this.graph, [...reachableFromRoute], train.cargoCapacity,
+      );
+
+      // 乗り換え降車: 到着前に持っていた貨物のうち、
+      // この路線の停車駅にない目的地で、他路線の接続がある駅で降ろす
+      const routeStopSet = new Set(routeStops);
+      for (const stopId of routeStops) {
+        for (const cn of this.graph.getStationComplex(stopId)) {
+          routeStopSet.add(cn.id);
+        }
+      }
+      // 到着前に持っていた貨物の目的地セット（新規積載分は除外）
+      const priorDestinations = new Set(train.cargo.map((c) => `${String(c.resource)}-${String(c.destinationNodeId)}`));
+      const kept: typeof newCargo = [];
+      for (const item of newCargo) {
+        const itemKey = `${String(item.resource)}-${String(item.destinationNodeId)}`;
+        // この路線で運べる貨物はそのまま運ぶ
+        if (routeStopSet.has(item.destinationNodeId)) {
+          kept.push(item);
+          continue;
+        }
+        // この駅で新しく積んだ貨物は降ろさない（次の駅で判定する）
+        if (!priorDestinations.has(itemKey)) {
+          kept.push(item);
+          continue;
+        }
+        // 目的地がこの駅の複合体から到達可能なら降ろす
+        let canTransferHere = false;
+        for (const cid of complexIds) {
+          const conns = routeConns.get(cid);
+          if (conns?.includes(item.destinationNodeId) === true) {
+            canTransferHere = true;
+            break;
+          }
+        }
+        if (canTransferHere) {
+          const dropNodeId = complexIds[0];
+          if (dropNodeId !== undefined) {
+            this.economy.addWaiting(dropNodeId, item.resource, item.amount, item.destinationNodeId);
+          }
+        } else {
+          kept.push(item);
+        }
+      }
+      train.cargo = kept;
 
       // 収益が発生したらフローティングテキストを追加する
       if (earned > 0) {
@@ -201,6 +287,14 @@ export class GameWorld {
     this.updateFloatingTexts(dt);
     this.sim.update(dt, this.graph);
     this.economy.update(dt, this.graph, this.map, this.buildRouteConnections());
+
+    // 全列車の運行コストを差し引く
+    for (const train of this.sim.getAllTrains()) {
+      const stats = calcConsistStats(train.cars);
+      if (stats !== null) {
+        this.economy.deductRunningCost(stats.runningCost * dt);
+      }
+    }
   }
 
   // --- トースト ---
@@ -276,14 +370,25 @@ export class GameWorld {
         return {
           id: t.id,
           routeId: t.routeId,
+          routeName: route?.name ?? "?",
           state: t.state === TrainState.AtNode ? "At Node" : "On Edge",
           targetStop: targetNode?.name ?? `#${String(targetNodeId ?? "?")}`,
+          speed: t.speed,
+          cars: t.cars,
+          cargoCapacity: t.cargoCapacity,
           cargoTotal: total,
           cargoDetail: detail,
         };
       }),
+      openTrainIds: [...this.openTrainIds],
       inspect: this.buildInspectInfo(),
       toasts: [...this.toasts],
+      consistPresets: [...this.consistPresets.values()].map((p) => ({
+        id: p.id,
+        name: p.name,
+        cars: p.cars,
+        stats: calcConsistStats(p.cars),
+      })),
       debug: this.config.debug,
       seed: this.config.seed,
     };
@@ -407,10 +512,57 @@ export class GameWorld {
     this.railSubMode = mode;
   }
 
-  addTrain(routeId?: number): void {
+  openTrainDetail(trainId: number): void {
+    if (!this.openTrainIds.includes(trainId)) {
+      this.openTrainIds.push(trainId);
+    }
+  }
+
+  closeTrainDetail(trainId: number): void {
+    this.openTrainIds = this.openTrainIds.filter((id) => id !== trainId);
+  }
+
+  toggleTrainDetail(trainId: number): void {
+    if (this.openTrainIds.includes(trainId)) {
+      this.closeTrainDetail(trainId);
+    } else {
+      this.openTrainDetail(trainId);
+    }
+  }
+
+  /**
+   * 路線に列車を増発する。路線に紐付いた編成プリセットを使用する。
+   * プリセット未設定なら従来通りデフォルト性能で生成する。
+   * 購入費が不足している場合は失敗メッセージを返す。
+   */
+  addTrain(routeId?: number): string | null {
     const id = routeId ?? this.lastRouteId;
-    if (id === null) return;
+    if (id === null) return "路線が選択されていません";
+
+    const route = this.sim.getRoute(id);
+    if (route === undefined) return "路線が見つかりません";
+
+    // 編成プリセットが設定されている場合
+    if (route.consistPresetId !== null) {
+      const preset = this.consistPresets.get(route.consistPresetId);
+      if (preset === undefined) return "編成プリセットが見つかりません";
+
+      const stats = calcConsistStats(preset.cars);
+      if (stats === null) return "編成が不正です";
+      if (!stats.hasPower) return "動力車がありません";
+
+      if (this.economy.money < stats.purchaseCost) {
+        return `資金不足です（必要: $${String(stats.purchaseCost)}）`;
+      }
+
+      this.economy.deductRunningCost(stats.purchaseCost);
+      this.sim.addTrain(id, this.graph, preset.cars, stats.effectiveSpeed, stats.totalCapacity);
+      return null;
+    }
+
+    // プリセット未設定: 従来通り
     this.sim.addTrain(id, this.graph);
+    return null;
   }
 
   selectRoute(routeId: number): void {
@@ -525,6 +677,50 @@ export class GameWorld {
     this.routeStops = [];
     this.editingRouteId = null;
     this.selectedNodeId = null;
+  }
+
+  // --- 編成プリセット管理 ---
+
+  addConsistPreset(name: string, cars: readonly string[]): ConsistPreset | null {
+    const stats = calcConsistStats(cars);
+    if (stats === null) return null;
+    const id = this.nextPresetId++;
+    const preset: ConsistPreset = { id, name, cars };
+    this.consistPresets.set(id, preset);
+    return preset;
+  }
+
+  updateConsistPreset(presetId: number, name: string, cars: readonly string[]): boolean {
+    const existing = this.consistPresets.get(presetId);
+    if (existing === undefined) return false;
+    const stats = calcConsistStats(cars);
+    if (stats === null) return false;
+    this.consistPresets.set(presetId, { id: presetId, name, cars });
+    return true;
+  }
+
+  removeConsistPreset(presetId: number): void {
+    this.consistPresets.delete(presetId);
+    // このプリセットを使用中の路線をリセットする
+    for (const route of this.sim.getAllRoutes()) {
+      if (route.consistPresetId === presetId) {
+        route.consistPresetId = null;
+      }
+    }
+  }
+
+  getConsistPreset(presetId: number): ConsistPreset | undefined {
+    return this.consistPresets.get(presetId);
+  }
+
+  getAllConsistPresets(): readonly ConsistPreset[] {
+    return [...this.consistPresets.values()];
+  }
+
+  setRouteConsist(routeId: number, presetId: number | null): void {
+    const route = this.sim.getRoute(routeId);
+    if (route === undefined) return;
+    route.consistPresetId = presetId;
   }
 
   // --- 入力処理 ---
@@ -981,18 +1177,39 @@ export class GameWorld {
     this.connectNodes(b2.id, mid.id, [{ x: 29, y: 21 }, { x: 28, y: 21 }, { x: 28, y: 29 }]);
     this.connectNodes(mid.id, d1.id, [{ x: 28, y: 31 }, { x: 28, y: 39 }, { x: 31, y: 39 }, { x: 31, y: 40 }]);
 
-    // 田園〜港町線: 中央#1に停車（乗り換え可能）
+    // 編成プリセットを作成する
+    const passengerConsist = this.addConsistPreset("普通旅客", ["loco_steam", "car_passenger", "car_passenger"]);
+    const freightConsist = this.addConsistPreset("貨物列車", ["loco_diesel", "car_freight", "car_freight", "car_freight"]);
+    const expressConsist = this.addConsistPreset("特急", ["car_express", "car_express", "car_express"]);
+    const localConsist = this.addConsistPreset("縦断ローカル", ["loco_steam", "car_passenger"]);
+
+    // 初期資金を設定する
+    this.economy.deductRunningCost(-5000);
+
+    // 田園〜港町線: 旅客編成
     const route1 = this.sim.addRoute([a.id, b1.id, e.id], RouteMode.Shuttle, "田園〜港町線");
-    this.sim.addTrain(route1.id, this.graph);
-    this.sim.addTrain(route1.id, this.graph);
+    if (passengerConsist !== null) {
+      this.setRouteConsist(route1.id, passengerConsist.id);
+    }
+    this.addTrain(route1.id);
+    this.addTrain(route1.id);
 
-    // 鉱山口〜南港線: 山手#1に停車（乗り換え可能）
+    // 鉱山口〜南港線: 貨物編成
     const route2 = this.sim.addRoute([c.id, d1.id, g.id], RouteMode.Shuttle, "鉱山口〜南港線");
-    this.sim.addTrain(route2.id, this.graph);
+    if (freightConsist !== null) {
+      this.setRouteConsist(route2.id, freightConsist.id);
+    }
+    this.addTrain(route2.id);
 
-    // 縦断線: 中央#2 - 中央連絡 - 山手#1
+    // 縦断線: ローカル編成
     const route3 = this.sim.addRoute([b2.id, mid.id, d1.id], RouteMode.Shuttle, "縦断線");
-    this.sim.addTrain(route3.id, this.graph);
+    if (localConsist !== null) {
+      this.setRouteConsist(route3.id, localConsist.id);
+    }
+    this.addTrain(route3.id);
+
+    // 特急プリセットは未使用だが選択可能な状態にしておく
+    void expressConsist;
 
     this.lastRouteId = route1.id;
 

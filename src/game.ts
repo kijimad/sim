@@ -188,7 +188,10 @@ export class Game {
   }
 
   addTrain(routeId?: number): void {
-    this.world.addTrain(routeId);
+    const error = this.world.addTrain(routeId);
+    if (error !== null) {
+      this.world.showToast(error);
+    }
     this.notify();
   }
 
@@ -235,6 +238,16 @@ export class Game {
     if (error !== null) {
       this.world.showToast(error);
     }
+    this.notify();
+  }
+
+  toggleTrainDetail(trainId: number): void {
+    this.world.toggleTrainDetail(trainId);
+    this.notify();
+  }
+
+  closeTrainDetail(trainId: number): void {
+    this.world.closeTrainDetail(trainId);
     this.notify();
   }
 

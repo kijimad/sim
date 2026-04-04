@@ -44,12 +44,11 @@ function EditableName({ value, onSave }: { value: string; onSave: (v: string) =>
 
 export function RouteList({ routes, lastRouteId, game }: RouteListProps) {
   if (routes.length === 0) {
-    return <div className="route-list-empty">No routes. Use Route tool (3) to create one.</div>;
+    return <div style={{ color: "#888", fontSize: 12 }}>No routes. Use Route tool (2) to create one.</div>;
   }
 
   return (
     <div className="route-list">
-      <div className="panel-header">Routes</div>
       {routes.map((r) => (
         <div
           key={r.id}

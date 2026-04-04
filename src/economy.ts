@@ -370,6 +370,7 @@ export class Economy {
     carrying: CargoItem[],
     _graph: Graph,
     routeStops: readonly number[],
+    cargoCapacity: number = Infinity,
   ): { earned: number; newCargo: CargoItem[] } {
     let earned = 0;
     const complexSet = new Set(complexNodeIds);
@@ -378,7 +379,6 @@ export class Economy {
     const remaining: CargoItem[] = [];
     for (const item of carrying) {
       if (complexSet.has(item.destinationNodeId)) {
-        // 配達成功: 消費建物が範囲内にあれば収益を得る
         earned += item.amount * DELIVERY_REWARD[item.resource];
       } else {
         remaining.push(item);
@@ -387,7 +387,14 @@ export class Economy {
 
     this._money += earned;
 
-    // 複合体内の全駅の待機貨物から、路線上の駅が目的地のものを積み込む
+    // 現在の積載量を計算する
+    let currentLoad = 0;
+    for (const item of remaining) {
+      currentLoad += item.amount;
+    }
+    let spaceLeft = cargoCapacity - currentLoad;
+
+    // 複合体内の全駅の待機貨物から、路線上の駅が目的地のものを容量まで積み込む
     const routeSet = new Set(routeStops);
     const newCargo = [...remaining];
     for (const nid of complexNodeIds) {
@@ -395,24 +402,36 @@ export class Economy {
       if (sc === undefined) continue;
       const kept: CargoItem[] = [];
       for (const item of sc.waiting) {
-        if (item.amount > 0 && routeSet.has(item.destinationNodeId)) {
-          // 同じ資源・同じ目的地の既存積載と合算する
-          const existing = newCargo.find(
-            (c) => c.resource === item.resource && c.destinationNodeId === item.destinationNodeId,
-          );
-          if (existing !== undefined) {
-            existing.amount += item.amount;
-          } else {
-            newCargo.push({ resource: item.resource, destinationNodeId: item.destinationNodeId, amount: item.amount });
-          }
-        } else {
+        if (spaceLeft <= 0 || item.amount <= 0 || !routeSet.has(item.destinationNodeId)) {
           kept.push(item);
+          continue;
+        }
+        // 積める量を制限する
+        const loadAmount = Math.min(item.amount, spaceLeft);
+        const existing = newCargo.find(
+          (c) => c.resource === item.resource && c.destinationNodeId === item.destinationNodeId,
+        );
+        if (existing !== undefined) {
+          existing.amount += loadAmount;
+        } else {
+          newCargo.push({ resource: item.resource, destinationNodeId: item.destinationNodeId, amount: loadAmount });
+        }
+        spaceLeft -= loadAmount;
+        // 積み残しがあれば駅に残す
+        const leftover = item.amount - loadAmount;
+        if (leftover > 0) {
+          kept.push({ resource: item.resource, destinationNodeId: item.destinationNodeId, amount: leftover });
         }
       }
       sc.waiting = kept;
     }
 
     return { earned, newCargo };
+  }
+
+  /** 運行コストを差し引く */
+  deductRunningCost(amount: number): void {
+    this._money -= amount;
   }
 
   // --- ヘルパー ---

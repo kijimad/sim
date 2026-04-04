@@ -3,6 +3,7 @@ import { GameWorld } from "./game-world.js";
 import { BuildingType, Resource } from "./economy.js";
 import { NodeKind } from "./graph.js";
 import { RouteMode } from "./simulation.js";
+import { calcConsistStats } from "./vehicle.js";
 
 /** デバッグワールドを生成する */
 function createDebugWorld(): GameWorld {
@@ -47,7 +48,6 @@ describe("GameWorld - デバッグワールド初期化", () => {
 describe("GameWorld - シミュレーション更新", () => {
   it("updateで時間が進む", () => {
     const world = createDebugWorld();
-    const moneyBefore = world.economy.money;
 
     // 十分な時間を進めて列車を運行させる
     for (let i = 0; i < 1000; i++) {
@@ -57,13 +57,12 @@ describe("GameWorld - シミュレーション更新", () => {
     // 列車が走行して何かしら状態が変化している
     const snapshot = world.getSnapshot();
     expect(snapshot.trainCount).toBe(4);
-    // 経済が動いている（生産が行われている）
+    // 経済が動いている（生産が行われ、貨物が駅に溜まっている）
     const totalWaiting = [...world.graph.getAllNodes()].reduce(
       (sum, n) => sum + world.economy.getTotalWaiting(n.id),
       0,
     );
-    // 生産が行われているか、配達で消費されている
-    expect(totalWaiting + world.economy.money).toBeGreaterThanOrEqual(moneyBefore);
+    expect(totalWaiting).toBeGreaterThan(0);
   });
 });
 
@@ -348,6 +347,54 @@ describe("GameWorld - 乗り換え経由の貨物", () => {
   });
 });
 
+describe("GameWorld - 乗り換え経由の配達", () => {
+  it("乗り換え駅で貨物が降ろされて待機する", () => {
+    const world = createEmptyWorld();
+
+    // A --- B#1
+    //       B#2 --- C
+    const a = world.graph.addNode(NodeKind.Station, 5, 5, "A");
+    const b1 = world.graph.addNode(NodeKind.Station, 15, 5, "B#1");
+    const b2 = world.graph.addNode(NodeKind.Station, 15, 6, "B#2");
+    const c = world.graph.addNode(NodeKind.Station, 25, 6, "C");
+
+    world.graph.addEdge(a.id, b1.id, [
+      { x: 5, y: 5 }, { x: 10, y: 5 }, { x: 15, y: 5 },
+    ]);
+    world.graph.addEdge(b2.id, c.id, [
+      { x: 15, y: 6 }, { x: 20, y: 6 }, { x: 25, y: 6 },
+    ]);
+
+    world.sim.addRoute([a.id, b1.id], RouteMode.Shuttle);
+    world.sim.addRoute([b2.id, c.id], RouteMode.Shuttle);
+
+    // 路線接続確認: AからCに到達可能であること
+    const conns = world.buildRouteConnections();
+    expect(conns.get(a.id) ?? []).toContain(c.id);
+
+    // Aに目的地Cの旅客を置く
+    world.economy.addWaiting(a.id, Resource.Passengers, 10, c.id);
+
+    // 路線1の列車を配置
+    const route1 = world.sim.getAllRoutes()[0]!;
+    world.sim.addTrain(route1.id, world.graph);
+
+    // 十分に走らせる（列車がA→B#1→A→B#1 を数往復するのに十分な時間）
+    for (let i = 0; i < 2000; i++) {
+      world.update(0.1);
+    }
+
+    // B#1 or B#2 に乗り換え旅客が待機しているはず
+    const waitingB1 = world.economy.getTotalWaiting(b1.id);
+    const waitingB2 = world.economy.getTotalWaiting(b2.id);
+    expect(waitingB1 + waitingB2).toBeGreaterThan(0);
+
+    // Aの旅客は減っている
+    const waitingA = world.economy.getTotalWaiting(a.id);
+    expect(waitingA).toBeLessThan(10);
+  });
+});
+
 describe("GameWorld - トースト", () => {
   it("トーストが時間経過で消える", () => {
     const world = createDebugWorld();
@@ -551,5 +598,199 @@ describe("GameWorld - キー入力", () => {
     world.routeStops = [1, 2];
     world.onKeyPress("Escape");
     expect(world.routeStops).toEqual([]);
+  });
+});
+
+// --- 編成プリセット ---
+
+/** 路線付きの空ワールドを作るヘルパー */
+function createWorldWithRoute(): { world: GameWorld; routeId: number; s1Id: number; s2Id: number } {
+  const world = createEmptyWorld();
+  const s1 = world.graph.addNode(NodeKind.Station, 5, 5, "A");
+  const s2 = world.graph.addNode(NodeKind.Station, 15, 5, "B");
+  world.graph.addEdge(s1.id, s2.id, [
+    { x: 5, y: 5 }, { x: 6, y: 5 }, { x: 7, y: 5 }, { x: 8, y: 5 },
+    { x: 9, y: 5 }, { x: 10, y: 5 }, { x: 11, y: 5 }, { x: 12, y: 5 },
+    { x: 13, y: 5 }, { x: 14, y: 5 }, { x: 15, y: 5 },
+  ]);
+  const route = world.sim.addRoute([s1.id, s2.id], RouteMode.Shuttle, "Test Line");
+  return { world, routeId: route.id, s1Id: s1.id, s2Id: s2.id };
+}
+
+describe("GameWorld - 編成プリセット管理", () => {
+  it("プリセットを作成できる", () => {
+    const world = createEmptyWorld();
+    const preset = world.addConsistPreset("普通列車", ["loco_steam", "car_passenger", "car_passenger"]);
+    expect(preset).not.toBeNull();
+    expect(preset!.name).toBe("普通列車");
+    expect(preset!.cars).toEqual(["loco_steam", "car_passenger", "car_passenger"]);
+  });
+
+  it("不正な車両IDを含むプリセットは作成できない", () => {
+    const world = createEmptyWorld();
+    const preset = world.addConsistPreset("bad", ["loco_steam", "nonexistent"]);
+    expect(preset).toBeNull();
+  });
+
+  it("プリセットを更新できる", () => {
+    const world = createEmptyWorld();
+    const preset = world.addConsistPreset("test", ["loco_steam", "car_passenger"]);
+    expect(preset).not.toBeNull();
+
+    const ok = world.updateConsistPreset(preset!.id, "updated", ["loco_diesel", "car_freight"]);
+    expect(ok).toBe(true);
+
+    const updated = world.getConsistPreset(preset!.id);
+    expect(updated!.name).toBe("updated");
+    expect(updated!.cars).toEqual(["loco_diesel", "car_freight"]);
+  });
+
+  it("プリセットを削除すると路線の紐付けがリセットされる", () => {
+    const { world, routeId } = createWorldWithRoute();
+    const preset = world.addConsistPreset("test", ["loco_steam", "car_passenger"]);
+    expect(preset).not.toBeNull();
+
+    world.setRouteConsist(routeId, preset!.id);
+    expect(world.sim.getRoute(routeId)!.consistPresetId).toBe(preset!.id);
+
+    world.removeConsistPreset(preset!.id);
+    expect(world.sim.getRoute(routeId)!.consistPresetId).toBeNull();
+  });
+
+  it("スナップショットにプリセット情報が含まれる", () => {
+    const world = createEmptyWorld();
+    world.addConsistPreset("普通", ["loco_steam", "car_passenger"]);
+    world.addConsistPreset("貨物", ["loco_diesel", "car_freight", "car_freight"]);
+
+    const snap = world.getSnapshot();
+    expect(snap.consistPresets).toHaveLength(2);
+    expect(snap.consistPresets[0]!.stats).not.toBeNull();
+    expect(snap.consistPresets[0]!.stats!.hasPower).toBe(true);
+  });
+});
+
+describe("GameWorld - 編成による増発", () => {
+  it("プリセット付き路線で列車を増発できる", () => {
+    const { world, routeId } = createWorldWithRoute();
+    const preset = world.addConsistPreset("普通", ["loco_steam", "car_passenger"]);
+    expect(preset).not.toBeNull();
+
+    // 十分な資金を設定
+    world.economy.deductRunningCost(-10000);
+
+    world.setRouteConsist(routeId, preset!.id);
+    const error = world.addTrain(routeId);
+    expect(error).toBeNull();
+    expect(world.sim.getAllTrains()).toHaveLength(1);
+
+    // 列車に車両構成が設定されている
+    const train = world.sim.getAllTrains()[0]!;
+    expect(train.cars).toEqual(["loco_steam", "car_passenger"]);
+
+    // 速度は編成の実効速度
+    const stats = calcConsistStats(["loco_steam", "car_passenger"]);
+    expect(train.speed).toBe(stats!.effectiveSpeed);
+  });
+
+  it("資金不足で増発が拒否される", () => {
+    const { world, routeId } = createWorldWithRoute();
+    const preset = world.addConsistPreset("高額", ["loco_diesel", "car_express", "car_express", "car_express"]);
+    expect(preset).not.toBeNull();
+
+    // 資金を0にする
+    world.economy.deductRunningCost(world.economy.money);
+
+    world.setRouteConsist(routeId, preset!.id);
+    const error = world.addTrain(routeId);
+    expect(error).not.toBeNull();
+    expect(error).toContain("資金不足");
+    expect(world.sim.getAllTrains()).toHaveLength(0);
+  });
+
+  it("動力車なしの編成は増発できない", () => {
+    const { world, routeId } = createWorldWithRoute();
+    const preset = world.addConsistPreset("客車のみ", ["car_passenger", "car_passenger"]);
+    expect(preset).not.toBeNull();
+
+    world.economy.deductRunningCost(-10000);
+    world.setRouteConsist(routeId, preset!.id);
+
+    const error = world.addTrain(routeId);
+    expect(error).toBe("動力車がありません");
+    expect(world.sim.getAllTrains()).toHaveLength(0);
+  });
+
+  it("プリセット未設定ならデフォルトで増発できる", () => {
+    const { world, routeId } = createWorldWithRoute();
+    const error = world.addTrain(routeId);
+    expect(error).toBeNull();
+    expect(world.sim.getAllTrains()).toHaveLength(1);
+
+    // デフォルト列車は cars が空
+    const train = world.sim.getAllTrains()[0]!;
+    expect(train.cars).toEqual([]);
+    expect(train.cargoCapacity).toBe(Infinity);
+  });
+});
+
+describe("GameWorld - 容量制限", () => {
+  it("列車の積載量が容量を超えない", () => {
+    const { world, routeId, s1Id, s2Id } = createWorldWithRoute();
+    const preset = world.addConsistPreset("小型", ["loco_steam", "car_passenger"]);
+    expect(preset).not.toBeNull();
+
+    world.economy.deductRunningCost(-10000);
+    world.setRouteConsist(routeId, preset!.id);
+    world.addTrain(routeId);
+
+    // 容量(40)を超える貨物を駅に置く
+    world.economy.addWaiting(s1Id, Resource.Passengers, 100, s2Id);
+
+    // 列車を走らせて積載させる
+    for (let i = 0; i < 100; i++) {
+      world.update(0.1);
+    }
+
+    // 列車の積載量が容量以下であること
+    const train = world.sim.getAllTrains()[0]!;
+    let totalCargo = 0;
+    for (const item of train.cargo) {
+      totalCargo += item.amount;
+    }
+    expect(totalCargo).toBeLessThanOrEqual(40);
+
+    // 積み残しが駅にある
+    const stationWaiting = world.economy.getTotalWaiting(s1Id);
+    expect(stationWaiting).toBeGreaterThan(0);
+  });
+});
+
+describe("GameWorld - 運行コスト", () => {
+  it("列車の運行コストが毎フレーム差し引かれる", () => {
+    const { world, routeId } = createWorldWithRoute();
+    const preset = world.addConsistPreset("test", ["loco_steam", "car_passenger"]);
+    expect(preset).not.toBeNull();
+
+    // 十分な資金を設定
+    world.economy.deductRunningCost(-10000);
+    const moneyBefore = world.economy.money;
+
+    world.setRouteConsist(routeId, preset!.id);
+    world.addTrain(routeId);
+
+    const stats = calcConsistStats(["loco_steam", "car_passenger"]);
+    const purchaseCost = stats!.purchaseCost;
+
+    // 購入費が引かれた後の残高
+    const afterPurchase = moneyBefore - purchaseCost;
+    expect(world.economy.money).toBeCloseTo(afterPurchase, 1);
+
+    // 時間を進めて運行コストが引かれることを確認
+    for (let i = 0; i < 100; i++) {
+      world.update(0.1);
+    }
+
+    // 運行コスト(4/s) × 10秒 = 40 が引かれている（+生産による収益は無視できる範囲）
+    expect(world.economy.money).toBeLessThan(afterPurchase);
   });
 });

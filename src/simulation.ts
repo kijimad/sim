@@ -24,6 +24,8 @@ export interface Route {
   /** 訪問するノードIDの順序付きリスト */
   readonly stops: readonly number[];
   readonly mode: RouteMode;
+  /** 増発時に使用する編成プリセットID */
+  consistPresetId: number | null;
 }
 
 // --- 列車 ---
@@ -61,6 +63,11 @@ export interface Train {
 
   // 貨物（目的地付き）
   cargo: CargoItem[];
+
+  // 車両構成
+  readonly cars: readonly string[];
+  /** 編成の最大積載量 */
+  readonly cargoCapacity: number;
 }
 
 export interface TrainPosition {
@@ -93,7 +100,7 @@ export class Simulation {
 
   addRoute(stops: readonly number[], mode: RouteMode, name?: string): Route {
     const id = this.nextId++;
-    const route: Route = { id, name: name ?? `Route ${String(id)}`, stops, mode };
+    const route: Route = { id, name: name ?? `Route ${String(id)}`, stops, mode, consistPresetId: null };
     this.routes.set(id, route);
     return route;
   }
@@ -137,7 +144,7 @@ export class Simulation {
 
   // --- 列車API ---
 
-  addTrain(routeId: number, graph: Graph): void {
+  addTrain(routeId: number, graph: Graph, cars?: readonly string[], speed?: number, cargoCapacity?: number): void {
     const route = this.routes.get(routeId);
     if (route === undefined || route.stops.length < 2) return;
     if (!this.isRouteValid(route.stops, graph)) return;
@@ -160,13 +167,15 @@ export class Simulation {
       forward: true,
       pathIndex: 0,
       progress: 0,
-      speed: DEFAULT_SPEED,
+      speed: speed ?? DEFAULT_SPEED,
       waitTime: STATION_WAIT,
       routeId,
       routeStopIndex: 1,
       routeDirection: 1,
       cargo: [],
       sectionIndex: 0,
+      cars: cars ?? [],
+      cargoCapacity: cargoCapacity ?? Infinity,
     };
     this.trains.set(id, train);
     this.blocks.placeAtNode(startNodeId, id);

@@ -396,6 +396,84 @@
   font-style: italic;
 }
 
+.train-item {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.train-item:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.train-selected {
+  background: rgba(100, 180, 255, 0.15);
+  border-color: rgba(100, 180, 255, 0.4);
+}
+
+.train-cargo-bar {
+  color: #d08020;
+  font-size: 10px;
+}
+
+.car-icons,
+.car-icons-inline {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.car-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  text-align: center;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.car-power {
+  background: rgba(200, 60, 60, 0.5);
+  border: 1px solid rgba(200, 60, 60, 0.7);
+  color: #fcc;
+}
+
+.car-wagon {
+  background: rgba(60, 120, 200, 0.4);
+  border: 1px solid rgba(60, 120, 200, 0.6);
+  color: #ccf;
+}
+
+/* フローティングウィンドウレイヤー */
+.floating-layer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 15;
+  pointer-events: none;
+  width: 100%;
+  height: 100%;
+}
+
+.floating-window {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.close-btn:hover {
+  color: #fff;
+}
+
 .editable-name-wrap {
   display: inline-flex;
   align-items: center;
