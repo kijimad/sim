@@ -190,7 +190,7 @@ export class Game {
           this.floatingTexts.push({
             x: node.tileX,
             y: node.tileY,
-            text: `+$${String(earned)}`,
+            text: `+$${String(Math.floor(earned))}`,
             time: 2.0,
           });
         }
