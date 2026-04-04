@@ -1,4 +1,8 @@
+import { Button, Space, Tag, Typography } from "antd";
+import { CloseOutlined, SaveOutlined } from "@ant-design/icons";
 import { RouteMode } from "../simulation.js";
+
+const { Text } = Typography;
 
 interface RoutePanelProps {
   readonly stops: readonly number[];
@@ -13,54 +17,49 @@ export function RoutePanel({ stops, stopNames, editingRouteId, onConfirm, onCanc
   const isEditing = editingRouteId !== null;
 
   return (
-    <div className="route-panel">
-      <div className="panel-header">
-        {isEditing ? `Edit Route #${String(editingRouteId)}` : "Create Route"}
-      </div>
-      <div className="route-stops">
+    <div>
+      <Text type="secondary" style={{ fontSize: 11 }}>
+        {isEditing ? `Editing Route #${String(editingRouteId)}` : "Click stations to add stops"}
+      </Text>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "8px 0", minHeight: 28 }}>
         {stops.length === 0
-          ? "Click stations to add stops"
+          ? <Text type="secondary" italic>No stops</Text>
           : stops.map((_id, i) => (
-              <span key={`${String(_id)}-${String(i)}`} className="stop-editable">
-                {i > 0 && <span className="stop-arrow"> → </span>}
-                <span className="stop-badge">
-                  {stopNames[i] ?? `#${String(_id)}`}
-                  <button
-                    className="stop-remove"
-                    onClick={() => { onRemoveStop(i); }}
-                  >
-                    ×
-                  </button>
-                </span>
-              </span>
+              <Tag
+                key={`${String(_id)}-${String(i)}`}
+                closable
+                onClose={() => { onRemoveStop(i); }}
+              >
+                {stopNames[i] ?? `#${String(_id)}`}
+              </Tag>
             ))}
       </div>
-      <div className="route-actions">
+      <Space>
         {isEditing ? (
-          <button
+          <Button size="small" type="primary" icon={<SaveOutlined />}
             disabled={stops.length < 2}
             onClick={() => { onConfirm(RouteMode.Shuttle); }}
           >
             Save
-          </button>
+          </Button>
         ) : (
           <>
-            <button
+            <Button size="small" type="primary"
               disabled={stops.length < 2}
               onClick={() => { onConfirm(RouteMode.Shuttle); }}
             >
               Shuttle
-            </button>
-            <button
+            </Button>
+            <Button size="small"
               disabled={stops.length < 2}
               onClick={() => { onConfirm(RouteMode.Loop); }}
             >
               Loop
-            </button>
+            </Button>
           </>
         )}
-        <button onClick={onCancel}>Cancel</button>
-      </div>
+        <Button size="small" icon={<CloseOutlined />} onClick={onCancel}>Cancel</Button>
+      </Space>
     </div>
   );
 }

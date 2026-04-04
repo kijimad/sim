@@ -1,5 +1,5 @@
 import { Button, Descriptions, Divider, Select, Space, Tag, Typography } from "antd";
-import { DeleteOutlined, EditOutlined, PlusOutlined, MinusOutlined } from "@ant-design/icons";
+import { DeleteOutlined, EditOutlined, PlusOutlined, MinusOutlined, NodeIndexOutlined } from "@ant-design/icons";
 import type { Game, RouteInfo } from "../game.js";
 import type { ConsistPresetInfo } from "../game-world.js";
 import { VEHICLE_CATALOG, getVehicleType } from "../vehicle.js";
@@ -127,11 +127,7 @@ function RouteDetailWindow({ route, consistPresets, game, index }: {
   );
 }
 
-export function RouteList({ routes, openRouteIds, game }: Omit<RouteListProps, "consistPresets">) {
-  if (routes.length === 0) {
-    return <div style={{ color: "#888", fontSize: 12 }}>No routes. Use Route tool (2) to create one.</div>;
-  }
-
+export function RouteList({ routes, openRouteIds, game, onNewRoute }: Omit<RouteListProps, "consistPresets"> & { onNewRoute: () => void }) {
   return (
     <div className="route-list">
       {routes.map((r) => {
@@ -149,6 +145,12 @@ export function RouteList({ routes, openRouteIds, game }: Omit<RouteListProps, "
           </div>
         );
       })}
+      <Button size="small" type="dashed" icon={<NodeIndexOutlined />} block
+        style={{ marginTop: 4 }}
+        onClick={(e) => { e.stopPropagation(); onNewRoute(); }}
+      >
+        New Route
+      </Button>
     </div>
   );
 }

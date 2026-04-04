@@ -1,38 +1,29 @@
 import { useSyncExternalStore, useState, useCallback } from "react";
-import { ConfigProvider, theme } from "antd";
-import type { Game, GameSnapshot, Toast } from "../game.js";
+import { Button, ConfigProvider, message, Segmented, Space, Statistic, Tag, theme, Typography } from "antd";
+import {
+  SearchOutlined, ToolOutlined,
+  UnorderedListOutlined, CarOutlined, AppstoreOutlined,
+  DollarOutlined, TeamOutlined, BankOutlined,
+} from "@ant-design/icons";
+import type { Game, GameSnapshot } from "../game.js";
 import { ToolMode } from "../game.js";
-import { InspectPanel } from "./InspectPanel.js";
 import { RouteDetailWindows, RouteList } from "./RouteList.js";
 import { RoutePanel } from "./RoutePanel.js";
-import { StatusPanel } from "./StatusPanel.js";
 import { FloatingWindow } from "./FloatingWindow.js";
 import { TrainDetailWindows, TrainList } from "./TrainList.js";
 import { ConsistEditor } from "./ConsistEditor.js";
 import { InspectDetailWindows } from "./StationDetail.js";
 
+const { Text } = Typography;
+
 interface GameUIProps {
   readonly game: Game;
 }
 
-function ToastContainer({ toasts }: { toasts: readonly Toast[] }) {
-  if (toasts.length === 0) return null;
-  return (
-    <div className="toast-container">
-      {toasts.map((t) => (
-        <div key={t.id} className="toast-item">{t.message}</div>
-      ))}
-    </div>
-  );
-}
-
-function ToolbarButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button className={active ? "active" : ""} onClick={onClick}>
-      {label}
-    </button>
-  );
-}
+const toolOptions = [
+  { value: ToolMode.Inspect, label: "Inspect", icon: <SearchOutlined /> },
+  { value: ToolMode.Rail, label: "Rail", icon: <ToolOutlined /> },
+];
 
 export function GameUI({ game }: GameUIProps) {
   const snap = useSyncExternalStore<GameSnapshot>(
@@ -40,16 +31,24 @@ export function GameUI({ game }: GameUIProps) {
     () => game.getSnapshot(),
   );
 
-  // 各ウィンドウの開閉状態
-  const [showInspect, setShowInspect] = useState(false);
   const [showRoutes, setShowRoutes] = useState(false);
   const [showTrains, setShowTrains] = useState(false);
   const [showRouteEditor, setShowRouteEditor] = useState(false);
   const [showConsists, setShowConsists] = useState(false);
+  const [messageApi, contextHolder] = message.useMessage();
+
+  // トースト表示
+  const prevToastCount = useState(0);
+  if (snap.toasts.length > prevToastCount[0]) {
+    const latest = snap.toasts[snap.toasts.length - 1];
+    if (latest !== undefined) {
+      void messageApi.info(latest.message);
+    }
+  }
+  prevToastCount[0] = snap.toasts.length;
 
   const setTool = useCallback((mode: ToolMode) => {
     game.setToolMode(mode);
-    // Route ツール選択時は路線エディタを自動的に開く
     if (mode === ToolMode.Route) {
       setShowRouteEditor(true);
     }
@@ -57,40 +56,58 @@ export function GameUI({ game }: GameUIProps) {
 
   return (
     <ConfigProvider theme={{ algorithm: theme.darkAlgorithm }}>
+      {contextHolder}
       <div className="game-ui">
         <div className="top-bar">
-          <div className="toolbar">
-            <ToolbarButton label="Inspect (`)" active={snap.toolMode === ToolMode.Inspect}
-              onClick={() => { setTool(ToolMode.Inspect); }} />
-            <ToolbarButton label="Rail (1)" active={snap.toolMode === ToolMode.Rail}
-              onClick={() => { setTool(ToolMode.Rail); }} />
-            <ToolbarButton label="Route (2)" active={snap.toolMode === ToolMode.Route}
-              onClick={() => { setTool(ToolMode.Route); }} />
-          </div>
-          <div className="toolbar">
-            <ToolbarButton label="Inspect" active={showInspect}
-              onClick={() => { setShowInspect((v) => !v); }} />
-            <ToolbarButton label="Routes" active={showRoutes}
-              onClick={() => { setShowRoutes((v) => !v); }} />
-            <ToolbarButton label="Trains" active={showTrains}
-              onClick={() => { setShowTrains((v) => !v); }} />
-            <ToolbarButton label="Consists" active={showConsists}
-              onClick={() => { setShowConsists((v) => !v); }} />
-          </div>
-          <StatusPanel snap={snap} />
+          <Space size="middle">
+            <div className="toolbar-group">
+              <Text type="secondary" style={{ fontSize: 10 }}><ToolOutlined /> Tools</Text>
+              <Segmented
+                size="small"
+                value={snap.toolMode}
+                options={toolOptions}
+                onChange={(v) => { setTool(v); }}
+              />
+            </div>
+            <div className="toolbar-group">
+              <Text type="secondary" style={{ fontSize: 10 }}><AppstoreOutlined /> Windows</Text>
+              <Space size={4}>
+                <Button size="small" type={showRoutes ? "primary" : "default"} icon={<UnorderedListOutlined />}
+                  onClick={() => { setShowRoutes((v) => !v); }}>Routes</Button>
+                <Button size="small" type={showTrains ? "primary" : "default"} icon={<CarOutlined />}
+                  onClick={() => { setShowTrains((v) => !v); }}>Trains</Button>
+                <Button size="small" type={showConsists ? "primary" : "default"} icon={<AppstoreOutlined />}
+                  onClick={() => { setShowConsists((v) => !v); }}>Consists</Button>
+              </Space>
+            </div>
+            <Space size="large">
+              <Statistic
+                title={<Text type="secondary" style={{ fontSize: 10 }}><DollarOutlined /> Money</Text>}
+                value={Math.floor(snap.money)}
+                prefix="$"
+                styles={{ content: { fontSize: 16, color: "#fff" } }}
+              />
+              <Statistic
+                title={<Text type="secondary" style={{ fontSize: 10 }}><TeamOutlined /> Pop</Text>}
+                value={snap.totalPopulation}
+                styles={{ content: { fontSize: 16, color: "#fff" } }}
+              />
+              <Statistic
+                title={<Text type="secondary" style={{ fontSize: 10 }}><BankOutlined /> Cities</Text>}
+                value={snap.cities.length}
+                styles={{ content: { fontSize: 16, color: "#fff" } }}
+              />
+              {snap.debug && <Tag color="orange">seed:{snap.seed}</Tag>}
+            </Space>
+          </Space>
         </div>
 
         {/* フローティングウィンドウ群 */}
         <div className="floating-layer">
-          {showInspect && (
-            <FloatingWindow title="Inspect" onClose={() => { setShowInspect(false); }} defaultX={10} defaultY={60} width={260}>
-              <InspectPanel info={snap.inspect} game={game} />
-            </FloatingWindow>
-          )}
-
           {showRoutes && (
             <FloatingWindow title={`Routes (${snap.routes.length})`} onClose={() => { setShowRoutes(false); }} defaultX={10} defaultY={200} width={220}>
-              <RouteList routes={snap.routes} openRouteIds={snap.openRouteIds} game={game} />
+              <RouteList routes={snap.routes} openRouteIds={snap.openRouteIds} game={game}
+                onNewRoute={() => { setTool(ToolMode.Route); }} />
             </FloatingWindow>
           )}
 
@@ -107,7 +124,7 @@ export function GameUI({ game }: GameUIProps) {
           )}
 
           {(showRouteEditor || snap.toolMode === ToolMode.Route) && snap.toolMode === ToolMode.Route && (
-            <FloatingWindow title="Route Editor" onClose={() => { setShowRouteEditor(false); game.cancelRoute(); }} defaultX={320} defaultY={60} width={300}>
+            <FloatingWindow title="Route Editor" onClose={() => { game.cancelRoute(); game.setToolMode(ToolMode.Inspect); setShowRouteEditor(false); }} defaultX={320} defaultY={60} width={300}>
               <RoutePanel
                 stops={snap.routeStops}
                 stopNames={snap.routeStopNames}
@@ -121,13 +138,13 @@ export function GameUI({ game }: GameUIProps) {
 
           {snap.toolMode === ToolMode.Rail && (
             <FloatingWindow title="Rail" onClose={() => { game.setToolMode(ToolMode.Inspect); }} defaultX={320} defaultY={60} width={260}>
-              <div style={{ color: "#aaa", fontSize: 12 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>
                 {snap.selectedNodeId !== null
                   ? snap.railWaypointCount > 0
                     ? `${String(snap.railWaypointCount)} waypoint(s). Click station to connect, or empty tile for more`
                     : "Click empty tile for waypoint, or station to connect"
                   : "Click station to select, or empty tile to place"}
-              </div>
+              </Text>
             </FloatingWindow>
           )}
 
@@ -135,8 +152,6 @@ export function GameUI({ game }: GameUIProps) {
           <RouteDetailWindows routes={snap.routes} openRouteIds={snap.openRouteIds} consistPresets={snap.consistPresets} game={game} />
           <InspectDetailWindows openInspectTiles={snap.openInspectTiles} game={game} />
         </div>
-
-        <ToastContainer toasts={snap.toasts} />
       </div>
     </ConfigProvider>
   );

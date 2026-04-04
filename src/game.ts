@@ -131,6 +131,14 @@ export class Game {
       );
       this.renderer.renderFloatingTexts(this.world.floatingTexts, this.camera, 2.0);
 
+      // ラベルを最前面に描画
+      const cityData = this.world.economy.getAllCities().map((c) => ({
+        tileX: c.centerX,
+        tileY: c.centerY,
+        name: c.name,
+      }));
+      this.renderer.renderLabels(this.world.graph, cityData, this.camera);
+
       // ウェイポイント仮表示
       if (this.world.selectedNodeId !== null) {
         const origin = this.world.graph.getNode(this.world.selectedNodeId);

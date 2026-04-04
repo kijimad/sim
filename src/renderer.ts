@@ -33,6 +33,36 @@ export class Renderer {
     this.canvas = canvas;
   }
 
+  /** 背景付きラベルを描画する */
+  private drawLabel(
+    text: string,
+    x: number,
+    y: number,
+    baseline: CanvasTextBaseline = "middle",
+    bg: string = "rgba(0, 0, 0, 0.7)",
+  ): void {
+    const { ctx } = this;
+    ctx.textAlign = "center";
+    ctx.textBaseline = baseline;
+    const metrics = ctx.measureText(text);
+    const padX = 3;
+    const padY = 2;
+    const w = metrics.width + padX * 2;
+    const h = TILE_SIZE * 0.3 + padY * 2;
+    let bgY: number;
+    if (baseline === "top") {
+      bgY = y - padY;
+    } else if (baseline === "bottom") {
+      bgY = y - h + padY;
+    } else {
+      bgY = y - h / 2;
+    }
+    ctx.fillStyle = bg;
+    ctx.fillRect(x - w / 2, bgY, w, h);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, x, y);
+  }
+
   render(map: TileMap, camera: Camera): void {
     const { ctx, canvas } = this;
 
@@ -355,13 +385,6 @@ export class Renderer {
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // ラベル
-    ctx.fillStyle = "#ffffff";
-    ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(node.name, cx, cy);
-
     // 列車数バッジ
     if (trainCount > 0) {
       const badgeX = cx + radius;
@@ -526,6 +549,33 @@ export class Renderer {
   }
 
   /** フローティングテキストを描画する（上方向にフェードアウト） */
+  /** 駅名・街名ラベルを最前面に描画する */
+  renderLabels(
+    graph: Graph,
+    cities: readonly { tileX: number; tileY: number; name: string }[],
+    camera: Camera,
+  ): void {
+    const { ctx, canvas } = this;
+    camera.applyTransform(ctx, canvas);
+    ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
+
+    // 駅名
+    for (const node of graph.getAllNodes()) {
+      const cx = node.tileX * TILE_SIZE + HALF_TILE;
+      const cy = node.tileY * TILE_SIZE + HALF_TILE;
+      this.drawLabel(node.name, cx, cy);
+    }
+
+    // 街名
+    for (const city of cities) {
+      const cx = city.tileX * TILE_SIZE + HALF_TILE;
+      const cy = city.tileY * TILE_SIZE + HALF_TILE;
+      this.drawLabel(city.name, cx, cy + TILE_SIZE * 0.5 + 2, "top", "rgba(50, 100, 180, 0.8)");
+    }
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
   renderFloatingTexts(
     texts: readonly { x: number; y: number; text: string; time: number }[],
     camera: Camera,
@@ -582,12 +632,6 @@ export class Renderer {
         ctx.setLineDash([]);
       }
 
-      // 名前ラベル
-      ctx.fillStyle = "#ffffff";
-      ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      ctx.fillText(city.name, cx, cy + TILE_SIZE * 0.5 + 2);
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
