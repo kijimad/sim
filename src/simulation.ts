@@ -24,8 +24,8 @@ export interface Route {
   /** 訪問するノードIDの順序付きリスト */
   readonly stops: readonly number[];
   readonly mode: RouteMode;
-  /** 増発時に使用する編成プリセットID */
-  consistPresetId: number | null;
+  /** この路線の車両構成 */
+  cars: string[];
 }
 
 // --- 列車 ---
@@ -65,9 +65,9 @@ export interface Train {
   cargo: CargoItem[];
 
   // 車両構成
-  readonly cars: readonly string[];
+  cars: string[];
   /** 編成の最大積載量 */
-  readonly cargoCapacity: number;
+  cargoCapacity: number;
 }
 
 export interface TrainPosition {
@@ -75,10 +75,13 @@ export interface TrainPosition {
   readonly worldX: number;
   readonly worldY: number;
   readonly cargoTotal: number;
+  readonly cargoCapacity: number;
   readonly dirX: number;
   readonly dirY: number;
   /** スロット内（停車中）か待機列か */
   readonly inSlot: boolean;
+  /** 車両構成 */
+  readonly cars: readonly string[];
 }
 
 // --- 定数 ---
@@ -100,7 +103,7 @@ export class Simulation {
 
   addRoute(stops: readonly number[], mode: RouteMode, name?: string): Route {
     const id = this.nextId++;
-    const route: Route = { id, name: name ?? `Route ${String(id)}`, stops, mode, consistPresetId: null };
+    const route: Route = { id, name: name ?? `Route ${String(id)}`, stops, mode, cars: [] };
     this.routes.set(id, route);
     return route;
   }
@@ -174,7 +177,7 @@ export class Simulation {
       routeDirection: 1,
       cargo: [],
       sectionIndex: 0,
-      cars: cars ?? [],
+      cars: [...(cars ?? [])],
       cargoCapacity: cargoCapacity ?? Infinity,
     };
     this.trains.set(id, train);
@@ -620,9 +623,11 @@ export class Simulation {
         worldX: node.tileX + offsetX,
         worldY: node.tileY,
         cargoTotal,
+        cargoCapacity: train.cargoCapacity,
         dirX: 0,
         dirY: 0,
         inSlot,
+        cars: train.cars,
       };
     }
 
@@ -652,9 +657,11 @@ export class Simulation {
       worldX: current.x + dx * train.progress,
       worldY: current.y + dy * train.progress,
       cargoTotal,
+      cargoCapacity: train.cargoCapacity,
       dirX,
       dirY,
       inSlot: true,
+      cars: train.cars,
     };
   }
 }

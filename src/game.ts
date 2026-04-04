@@ -195,6 +195,21 @@ export class Game {
     this.notify();
   }
 
+  toggleRouteDetail(routeId: number): void {
+    this.world.toggleRouteDetail(routeId);
+    this.notify();
+  }
+
+  closeInspectDetail(tx: number, ty: number): void {
+    this.world.closeInspectDetail(tx, ty);
+    this.notify();
+  }
+
+  closeRouteDetail(routeId: number): void {
+    this.world.closeRouteDetail(routeId);
+    this.notify();
+  }
+
   selectRoute(routeId: number): void {
     this.world.selectRoute(routeId);
     this.notify();

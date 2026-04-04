@@ -1,7 +1,7 @@
-import { Badge, Button, Descriptions, Space, Tag, Typography } from "antd";
-import { DeleteOutlined, TrademarkOutlined } from "@ant-design/icons";
+import { Badge, Button, Descriptions, Divider, Progress, Tag, Typography } from "antd";
+import { DeleteOutlined, PlusOutlined, TrademarkOutlined } from "@ant-design/icons";
 import type { Game, TrainInfo } from "../game.js";
-import { getVehicleType } from "../vehicle.js";
+import { VEHICLE_CATALOG, getVehicleType } from "../vehicle.js";
 import { FloatingWindow } from "./FloatingWindow.js";
 
 const { Text } = Typography;
@@ -12,9 +12,12 @@ interface TrainListProps {
   readonly game: Game;
 }
 
-function CarTag({ carId }: { carId: string }) {
+function CarTag({ carId, onRemove }: { carId: string; onRemove?: () => void }) {
   const vt = getVehicleType(carId);
   if (vt === undefined) return <Tag>?</Tag>;
+  if (onRemove !== undefined) {
+    return <Tag color={vt.power > 0 ? "red" : "blue"} closable onClose={onRemove}>{vt.name}</Tag>;
+  }
   return <Tag color={vt.power > 0 ? "red" : "blue"}>{vt.name}</Tag>;
 }
 
@@ -29,7 +32,7 @@ function TrainDetailWindow({ train, game, index }: { train: TrainInfo; game: Gam
       onClose={() => { game.closeTrainDetail(train.id); }}
       defaultX={200 + index * 30}
       defaultY={100 + index * 30}
-      width={280}
+      width={320}
     >
       <Descriptions column={1} size="small" colon={false}>
         <Descriptions.Item label="Route">{train.routeName}</Descriptions.Item>
@@ -38,15 +41,6 @@ function TrainDetailWindow({ train, game, index }: { train: TrainInfo; game: Gam
         </Descriptions.Item>
         <Descriptions.Item label="Next">→ {train.targetStop}</Descriptions.Item>
         <Descriptions.Item label="Speed">{train.speed.toFixed(1)} tiles/s</Descriptions.Item>
-        {train.cars.length > 0 && (
-          <Descriptions.Item label="Cars">
-            <Space size={2} wrap>
-              {train.cars.map((carId, i) => (
-                <CarTag key={`${carId}-${String(i)}`} carId={carId} />
-              ))}
-            </Space>
-          </Descriptions.Item>
-        )}
         <Descriptions.Item label="Cargo">{capacityLabel}</Descriptions.Item>
         {train.cargoDetail.map((c) => (
           <Descriptions.Item key={c.resource} label={`  ${c.resource}`}>
@@ -54,13 +48,40 @@ function TrainDetailWindow({ train, game, index }: { train: TrainInfo; game: Gam
           </Descriptions.Item>
         ))}
       </Descriptions>
-      <div style={{ marginTop: 8 }}>
-        <Button danger size="small" icon={<DeleteOutlined />}
-          onClick={() => { game.world.sim.removeTrain(train.id); game.closeTrainDetail(train.id); }}
-        >
-          Remove
-        </Button>
+
+      <Divider style={{ margin: "8px 0" }} />
+      <Text type="secondary" style={{ fontSize: 11 }}>車両構成</Text>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 2, margin: "4px 0" }}>
+        {train.cars.length === 0
+          ? <Text type="secondary" italic style={{ fontSize: 11 }}>車両なし（デフォルト）</Text>
+          : train.cars.map((carId, i) => (
+              <CarTag key={`${carId}-${String(i)}`} carId={carId}
+                onRemove={() => {
+                  const err = game.world.removeCarFromTrain(train.id, i);
+                  if (err !== null) { game.world.showToast(err); }
+                }}
+              />
+            ))}
       </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 4, margin: "4px 0" }}>
+        {VEHICLE_CATALOG.map((vt) => (
+          <Button key={vt.id} size="small" icon={<PlusOutlined />}
+            onClick={() => {
+              const err = game.world.addCarToTrain(train.id, vt.id);
+              if (err !== null) { game.world.showToast(err); }
+            }}
+          >
+            {vt.name}
+          </Button>
+        ))}
+      </div>
+
+      <Divider style={{ margin: "8px 0" }} />
+      <Button danger size="small" icon={<DeleteOutlined />}
+        onClick={() => { game.world.sim.removeTrain(train.id); game.closeTrainDetail(train.id); }}
+      >
+        Remove Train
+      </Button>
     </FloatingWindow>
   );
 }
@@ -85,16 +106,17 @@ export function TrainList({ trains, openTrainIds, game }: TrainListProps) {
             </div>
             <div className="train-item-detail">
               <span>→ {t.targetStop}</span>
-              {Number.isFinite(t.cargoCapacity) ? (
-                <Text type="warning" style={{ fontSize: 10 }}>
-                  {Math.floor(t.cargoTotal)}/{t.cargoCapacity}
-                </Text>
-              ) : t.cargoTotal > 0 ? (
-                <Text type="warning" style={{ fontSize: 10 }}>{Math.floor(t.cargoTotal)}</Text>
-              ) : (
-                <Text type="secondary" italic style={{ fontSize: 10 }}>Empty</Text>
-              )}
             </div>
+            {Number.isFinite(t.cargoCapacity) && t.cargoCapacity > 0 ? (
+              <Progress
+                percent={Math.round(t.cargoTotal / t.cargoCapacity * 100)}
+                size="small"
+                format={() => `${Math.floor(t.cargoTotal)}/${String(t.cargoCapacity)}`}
+                strokeColor={t.cargoTotal / t.cargoCapacity > 0.8 ? "#d4380d" : "#d08020"}
+              />
+            ) : t.cargoTotal > 0 ? (
+              <Text type="warning" style={{ fontSize: 10 }}>{Math.floor(t.cargoTotal)}</Text>
+            ) : null}
           </div>
         );
       })}

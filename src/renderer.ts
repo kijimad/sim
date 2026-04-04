@@ -5,6 +5,7 @@ import type { TrainPosition } from "./simulation.js";
 import { getSignalPositions } from "./graph.js";
 import type { TileMap } from "./tilemap.js";
 import { Terrain } from "./types.js";
+import { getVehicleType } from "./vehicle.js";
 
 export const TILE_SIZE = 32;
 const HALF_TILE = TILE_SIZE / 2;
@@ -405,38 +406,123 @@ export class Renderer {
       let cy = pos.worldY * TILE_SIZE + HALF_TILE;
 
       // 複線: 進行方向に対して右側にオフセット
-      if (pos.dirX !== 0 || pos.dirY !== 0) {
+      const hasDirX = pos.dirX !== 0;
+      const hasDirY = pos.dirY !== 0;
+      if (hasDirX || hasDirY) {
         const offsetDist = 3;
         cx += pos.dirY * offsetDist;
         cy += -pos.dirX * offsetDist;
       }
 
-      const size = TILE_SIZE * 0.4;
-
-      // 列車の色: 待機列は灰色、貨物積載中はオレンジ、空は青
-      if (!pos.inSlot) {
-        ctx.fillStyle = "#606060";
-      } else if (pos.cargoTotal > 0) {
-        ctx.fillStyle = "#d08020";
+      if (pos.cars.length > 0) {
+        // 車両構成に応じて連結された車両を描画する
+        this.renderConsist(ctx, pos, cx, cy);
       } else {
-        ctx.fillStyle = "#2050d0";
-      }
-      ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
-      ctx.strokeStyle = pos.inSlot ? "#ffffff" : "#999999";
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
-
-      // 貨物量ラベル
-      if (pos.cargoTotal > 0) {
-        ctx.fillStyle = "#ffffff";
-        ctx.font = `bold ${String(TILE_SIZE * 0.22)}px sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(String(Math.floor(pos.cargoTotal)), cx, cy);
+        // 車両構成なし: 従来の単一矩形
+        this.renderDefaultTrain(ctx, pos, cx, cy);
       }
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
+  /** 車両構成のある列車を連結して描画する */
+  private renderConsist(
+    ctx: CanvasRenderingContext2D,
+    pos: TrainPosition,
+    cx: number,
+    cy: number,
+  ): void {
+    const carW = TILE_SIZE * 0.28;
+    const carH = TILE_SIZE * 0.2;
+    const gap = 1;
+    const totalW = pos.cars.length * (carW + gap) - gap;
+    // 進行方向に沿って車両を並べる
+    const dx = pos.dirX;
+    const dy = pos.dirY;
+    // 停車中は横に並べる
+    const alongX = (dx !== 0 || dy !== 0) ? dx : 1;
+    const alongY = (dx !== 0 || dy !== 0) ? dy : 0;
+    for (let i = 0; i < pos.cars.length; i++) {
+      const carId = pos.cars[i];
+      if (carId === undefined) continue;
+      const vt = getVehicleType(carId);
+      // cars[0]=先頭車を進行方向の最も前（along方向の最大offset）に配置する
+      const offset = (pos.cars.length - 1 - i) * (carW + gap) - totalW / 2 + carW / 2;
+      const carCx = cx + alongX * offset;
+      const carCy = cy + alongY * offset;
+
+      // 車両タイプ別の色
+      if (!pos.inSlot) {
+        ctx.fillStyle = "#505050";
+      } else if (vt !== undefined && vt.power > 0) {
+        ctx.fillStyle = "#c04040"; // 動力車: 赤
+      } else if (vt !== undefined && vt.capacity > 0 && vt.cargoType === null) {
+        ctx.fillStyle = "#d08020"; // 貨車: オレンジ
+      } else {
+        ctx.fillStyle = "#2060c0"; // 客車: 青
+      }
+
+      // 車両を進行方向に沿った向きで描画する
+      const hw = carW / 2;
+      const hh = carH / 2;
+      if (Math.abs(alongX) > Math.abs(alongY)) {
+        // 横方向
+        ctx.fillRect(carCx - hw, carCy - hh, carW, carH);
+        ctx.strokeStyle = pos.inSlot ? "#ffffff" : "#888888";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(carCx - hw, carCy - hh, carW, carH);
+      } else {
+        // 縦方向
+        ctx.fillRect(carCx - hh, carCy - hw, carH, carW);
+        ctx.strokeStyle = pos.inSlot ? "#ffffff" : "#888888";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(carCx - hh, carCy - hw, carH, carW);
+      }
+    }
+
+    // 積載率ラベル
+    if (pos.cargoTotal > 0 && Number.isFinite(pos.cargoCapacity)) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `bold ${String(TILE_SIZE * 0.18)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillText(
+        `${String(Math.floor(pos.cargoTotal))}/${String(Math.floor(pos.cargoCapacity))}`,
+        cx,
+        cy - TILE_SIZE * 0.2,
+      );
+    }
+  }
+
+  /** 車両構成のないデフォルト列車を描画する */
+  private renderDefaultTrain(
+    ctx: CanvasRenderingContext2D,
+    pos: TrainPosition,
+    cx: number,
+    cy: number,
+  ): void {
+    const size = TILE_SIZE * 0.4;
+
+    if (!pos.inSlot) {
+      ctx.fillStyle = "#606060";
+    } else if (pos.cargoTotal > 0) {
+      ctx.fillStyle = "#d08020";
+    } else {
+      ctx.fillStyle = "#2050d0";
+    }
+    ctx.fillRect(cx - size / 2, cy - size / 2, size, size);
+    ctx.strokeStyle = pos.inSlot ? "#ffffff" : "#999999";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
+
+    if (pos.cargoTotal > 0) {
+      ctx.fillStyle = "#ffffff";
+      ctx.font = `bold ${String(TILE_SIZE * 0.22)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(Math.floor(pos.cargoTotal)), cx, cy);
+    }
   }
 
   /** フローティングテキストを描画する（上方向にフェードアウト） */

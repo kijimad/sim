@@ -3,11 +3,13 @@ import { ConfigProvider, theme } from "antd";
 import type { Game, GameSnapshot, Toast } from "../game.js";
 import { ToolMode } from "../game.js";
 import { InspectPanel } from "./InspectPanel.js";
-import { RouteList } from "./RouteList.js";
+import { RouteDetailWindows, RouteList } from "./RouteList.js";
 import { RoutePanel } from "./RoutePanel.js";
 import { StatusPanel } from "./StatusPanel.js";
 import { FloatingWindow } from "./FloatingWindow.js";
 import { TrainDetailWindows, TrainList } from "./TrainList.js";
+import { ConsistEditor } from "./ConsistEditor.js";
+import { InspectDetailWindows } from "./StationDetail.js";
 
 interface GameUIProps {
   readonly game: Game;
@@ -43,6 +45,7 @@ export function GameUI({ game }: GameUIProps) {
   const [showRoutes, setShowRoutes] = useState(false);
   const [showTrains, setShowTrains] = useState(false);
   const [showRouteEditor, setShowRouteEditor] = useState(false);
+  const [showConsists, setShowConsists] = useState(false);
 
   const setTool = useCallback((mode: ToolMode) => {
     game.setToolMode(mode);
@@ -71,6 +74,8 @@ export function GameUI({ game }: GameUIProps) {
               onClick={() => { setShowRoutes((v) => !v); }} />
             <ToolbarButton label="Trains" active={showTrains}
               onClick={() => { setShowTrains((v) => !v); }} />
+            <ToolbarButton label="Consists" active={showConsists}
+              onClick={() => { setShowConsists((v) => !v); }} />
           </div>
           <StatusPanel snap={snap} />
         </div>
@@ -84,8 +89,8 @@ export function GameUI({ game }: GameUIProps) {
           )}
 
           {showRoutes && (
-            <FloatingWindow title="Routes" onClose={() => { setShowRoutes(false); }} defaultX={10} defaultY={200} width={300}>
-              <RouteList routes={snap.routes} lastRouteId={snap.lastRouteId} game={game} />
+            <FloatingWindow title={`Routes (${snap.routes.length})`} onClose={() => { setShowRoutes(false); }} defaultX={10} defaultY={200} width={220}>
+              <RouteList routes={snap.routes} openRouteIds={snap.openRouteIds} game={game} />
             </FloatingWindow>
           )}
 
@@ -95,14 +100,20 @@ export function GameUI({ game }: GameUIProps) {
             </FloatingWindow>
           )}
 
+          {showConsists && (
+            <FloatingWindow title="Consists" onClose={() => { setShowConsists(false); }} defaultX={300} defaultY={200} width={340}>
+              <ConsistEditor presets={snap.consistPresets} game={game} />
+            </FloatingWindow>
+          )}
+
           {(showRouteEditor || snap.toolMode === ToolMode.Route) && snap.toolMode === ToolMode.Route && (
             <FloatingWindow title="Route Editor" onClose={() => { setShowRouteEditor(false); game.cancelRoute(); }} defaultX={320} defaultY={60} width={300}>
               <RoutePanel
                 stops={snap.routeStops}
                 stopNames={snap.routeStopNames}
                 editingRouteId={snap.editingRouteId}
-                onConfirm={(mode) => { game.confirmRoute(mode); }}
-                onCancel={() => { game.cancelRoute(); }}
+                onConfirm={(mode) => { game.confirmRoute(mode); setShowRouteEditor(false); }}
+                onCancel={() => { game.cancelRoute(); game.setToolMode(ToolMode.Inspect); setShowRouteEditor(false); }}
                 onRemoveStop={(i) => { game.removeRouteStop(i); }}
               />
             </FloatingWindow>
@@ -121,6 +132,8 @@ export function GameUI({ game }: GameUIProps) {
           )}
 
           <TrainDetailWindows trains={snap.trains} openTrainIds={snap.openTrainIds} game={game} />
+          <RouteDetailWindows routes={snap.routes} openRouteIds={snap.openRouteIds} consistPresets={snap.consistPresets} game={game} />
+          <InspectDetailWindows openInspectTiles={snap.openInspectTiles} game={game} />
         </div>
 
         <ToastContainer toasts={snap.toasts} />

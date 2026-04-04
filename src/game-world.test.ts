@@ -39,7 +39,7 @@ describe("GameWorld - デバッグワールド初期化", () => {
     const world = createDebugWorld();
     const nodes = [...world.graph.getAllNodes()];
     // 中央#1 に旅客が待機している
-    const chuou1 = nodes.find((n) => n.name === "中央 #1");
+    const chuou1 = nodes.find((n) => n.name === "中央駅 #1");
     expect(chuou1).toBeDefined();
     expect(world.economy.getWaiting(chuou1!.id, Resource.Passengers)).toBe(5);
   });
@@ -191,7 +191,7 @@ describe("GameWorld - スナップショット", () => {
     world.inspectTileY = 20;
     const info = world.buildInspectInfo();
     expect(info.type).toBe("node");
-    expect(info.nodeName).toBe("田園");
+    expect(info.nodeName).toBe("田園駅");
   });
 });
 
@@ -212,7 +212,7 @@ describe("GameWorld - 駅操作", () => {
   it("路線使用中の駅は削除できない", () => {
     const world = createDebugWorld();
     const nodes = [...world.graph.getAllNodes()];
-    const station = nodes.find((n) => n.name === "田園");
+    const station = nodes.find((n) => n.name === "田園駅");
     expect(station).toBeDefined();
 
     const error = world.removeNode(station!.id);
@@ -222,7 +222,7 @@ describe("GameWorld - 駅操作", () => {
   it("駅名を変更できる", () => {
     const world = createDebugWorld();
     const nodes = [...world.graph.getAllNodes()];
-    const station = nodes.find((n) => n.name === "田園")!;
+    const station = nodes.find((n) => n.name === "田園駅")!;
 
     world.renameNode(station.id, "Shin-Denen");
     expect(world.graph.getNode(station.id)?.name).toBe("Shin-Denen");
@@ -489,7 +489,7 @@ describe("GameWorld - インスペクト詳細", () => {
   it("待機貨物の目的地が表示される", () => {
     const world = createDebugWorld();
     const nodes = [...world.graph.getAllNodes()];
-    const chuou1 = nodes.find((n) => n.name === "中央 #1")!;
+    const chuou1 = nodes.find((n) => n.name === "中央駅 #1")!;
 
     // 中央#1 をインスペクト
     world.inspectTileX = chuou1.tileX;
@@ -645,16 +645,17 @@ describe("GameWorld - 編成プリセット管理", () => {
     expect(updated!.cars).toEqual(["loco_diesel", "car_freight"]);
   });
 
-  it("プリセットを削除すると路線の紐付けがリセットされる", () => {
+  it("プリセットを路線に適用すると車両構成がコピーされる", () => {
     const { world, routeId } = createWorldWithRoute();
     const preset = world.addConsistPreset("test", ["loco_steam", "car_passenger"]);
     expect(preset).not.toBeNull();
 
-    world.setRouteConsist(routeId, preset!.id);
-    expect(world.sim.getRoute(routeId)!.consistPresetId).toBe(preset!.id);
+    world.applyPresetToRoute(routeId, preset!.id);
+    expect(world.sim.getRoute(routeId)!.cars).toEqual(["loco_steam", "car_passenger"]);
 
+    // プリセット削除後も路線の車両構成は残る
     world.removeConsistPreset(preset!.id);
-    expect(world.sim.getRoute(routeId)!.consistPresetId).toBeNull();
+    expect(world.sim.getRoute(routeId)!.cars).toEqual(["loco_steam", "car_passenger"]);
   });
 
   it("スナップショットにプリセット情報が含まれる", () => {
@@ -678,7 +679,7 @@ describe("GameWorld - 編成による増発", () => {
     // 十分な資金を設定
     world.economy.deductRunningCost(-10000);
 
-    world.setRouteConsist(routeId, preset!.id);
+    world.applyPresetToRoute(routeId, preset!.id);
     const error = world.addTrain(routeId);
     expect(error).toBeNull();
     expect(world.sim.getAllTrains()).toHaveLength(1);
@@ -700,7 +701,7 @@ describe("GameWorld - 編成による増発", () => {
     // 資金を0にする
     world.economy.deductRunningCost(world.economy.money);
 
-    world.setRouteConsist(routeId, preset!.id);
+    world.applyPresetToRoute(routeId, preset!.id);
     const error = world.addTrain(routeId);
     expect(error).not.toBeNull();
     expect(error).toContain("資金不足");
@@ -713,7 +714,7 @@ describe("GameWorld - 編成による増発", () => {
     expect(preset).not.toBeNull();
 
     world.economy.deductRunningCost(-10000);
-    world.setRouteConsist(routeId, preset!.id);
+    world.applyPresetToRoute(routeId, preset!.id);
 
     const error = world.addTrain(routeId);
     expect(error).toBe("動力車がありません");
@@ -740,7 +741,7 @@ describe("GameWorld - 容量制限", () => {
     expect(preset).not.toBeNull();
 
     world.economy.deductRunningCost(-10000);
-    world.setRouteConsist(routeId, preset!.id);
+    world.applyPresetToRoute(routeId, preset!.id);
     world.addTrain(routeId);
 
     // 容量(40)を超える貨物を駅に置く
@@ -775,7 +776,7 @@ describe("GameWorld - 運行コスト", () => {
     world.economy.deductRunningCost(-10000);
     const moneyBefore = world.economy.money;
 
-    world.setRouteConsist(routeId, preset!.id);
+    world.applyPresetToRoute(routeId, preset!.id);
     world.addTrain(routeId);
 
     const stats = calcConsistStats(["loco_steam", "car_passenger"]);
