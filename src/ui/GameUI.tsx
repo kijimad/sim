@@ -1,4 +1,4 @@
-import { useSyncExternalStore, useState, useCallback } from "react";
+import { useSyncExternalStore, useState, useCallback, useEffect, useRef } from "react";
 import { Button, ConfigProvider, message, Segmented, Space, Statistic, Tag, theme, Typography } from "antd";
 import {
   SearchOutlined, ToolOutlined,
@@ -38,15 +38,17 @@ export function GameUI({ game }: GameUIProps) {
   const [showConsists, setShowConsists] = useState(false);
   const [messageApi, contextHolder] = message.useMessage();
 
-  // トースト表示
-  const prevToastCount = useState(0);
-  if (snap.toasts.length > prevToastCount[0]) {
-    const latest = snap.toasts[snap.toasts.length - 1];
-    if (latest !== undefined) {
-      void messageApi.info(latest.message);
+  // トースト表示（useEffect でレンダリング後に実行する）
+  const prevToastCount = useRef(0);
+  useEffect(() => {
+    if (snap.toasts.length > prevToastCount.current) {
+      const latest = snap.toasts[snap.toasts.length - 1];
+      if (latest !== undefined) {
+        void messageApi.info({ content: latest.message, duration: 2, key: `toast-${String(latest.id)}` });
+      }
     }
-  }
-  prevToastCount[0] = snap.toasts.length;
+    prevToastCount.current = snap.toasts.length;
+  }, [snap.toasts, messageApi]);
 
   const setTool = useCallback((mode: ToolMode) => {
     game.setToolMode(mode);

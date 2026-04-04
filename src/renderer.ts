@@ -602,6 +602,7 @@ export class Renderer {
     graph: Graph,
     cities: readonly { tileX: number; tileY: number; name: string }[],
     camera: Camera,
+    highlightNodeIds?: ReadonlySet<number>,
   ): void {
     const { ctx, canvas } = this;
     const vb = this.getViewBounds(camera, TILE_SIZE * 5);
@@ -612,7 +613,8 @@ export class Renderer {
       if (!this.isPointVisible(node.tileX, node.tileY, vb)) continue;
       const cx = node.tileX * TILE_SIZE + HALF_TILE;
       const cy = node.tileY * TILE_SIZE + HALF_TILE;
-      this.drawLabel(node.name, cx, cy);
+      const bg = highlightNodeIds?.has(node.id) === true ? "rgba(220, 160, 0, 0.9)" : "rgba(0, 0, 0, 0.7)";
+      this.drawLabel(node.name, cx, cy, "middle", bg);
     }
 
     for (const city of cities) {

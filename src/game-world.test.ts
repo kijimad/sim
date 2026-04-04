@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GameWorld } from "./game-world.js";
+import { GameWorld, createDefaultConfig } from "./game-world.js";
 import { BuildingType, Resource } from "./economy.js";
 import { NodeKind } from "./graph.js";
 import { RouteMode } from "./simulation.js";
@@ -7,12 +7,12 @@ import { calcConsistStats } from "./vehicle.js";
 
 /** デバッグワールドを生成する */
 function createDebugWorld(): GameWorld {
-  return new GameWorld({ seed: 42, debug: true });
+  return new GameWorld(createDefaultConfig({ seed: 42, debug: true }));
 }
 
 /** 空のワールドを生成する（手動構築用） */
 function createEmptyWorld(): GameWorld {
-  return new GameWorld({ seed: 42, debug: false });
+  return new GameWorld(createDefaultConfig({ seed: 42, debug: false }));
 }
 
 describe("GameWorld - デバッグワールド初期化", () => {
@@ -847,6 +847,79 @@ describe("GameWorld - Station ツール", () => {
     const newNode = nodes.find((n) => n.tileX === 10 && n.tileY === 11);
     expect(newNode).toBeDefined();
     expect(newNode!.name).toContain("#");
+  });
+
+  it("線路上に駅を建設するとエッジが分割される", () => {
+    const world = createDebugWorld();
+    const s1 = world.graph.addNode(NodeKind.Station, 2, 2, "P");
+    const s2 = world.graph.addNode(NodeKind.Station, 8, 2, "Q");
+    world.graph.addEdge(s1.id, s2.id, [
+      { x: 2, y: 2 }, { x: 3, y: 2 }, { x: 4, y: 2 }, { x: 5, y: 2 },
+      { x: 6, y: 2 }, { x: 7, y: 2 }, { x: 8, y: 2 },
+    ]);
+
+    const edgesBefore = [...world.graph.getAllEdges()].length;
+
+    // 線路の中間点(5,2)に駅を建設
+    world.toolMode = "station";
+    world.onTileClick(5, 2);
+
+    // 新しい駅が作成されている
+    const newNode = world.graph.getNodeAt(5, 2);
+    expect(newNode).toBeDefined();
+
+    // エッジが2本に分割されている（元の1本が消えて2本追加 = +1）
+    const edgesAfter = [...world.graph.getAllEdges()].length;
+    expect(edgesAfter).toBe(edgesBefore + 1);
+
+    // P→新駅、新駅→Q の2本がある
+    expect(world.graph.getEdgesFor(newNode!.id).length).toBe(2);
+    expect(world.graph.getEdgesFor(s1.id).length).toBeGreaterThanOrEqual(1);
+    expect(world.graph.getEdgesFor(s2.id).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("列車走行中のエッジ上には建設できない", () => {
+    const world = createDebugWorld();
+    // 列車を走らせる
+    for (let i = 0; i < 30; i++) {
+      world.update(0.1);
+    }
+
+    // 列車が走行中のエッジを探す
+    let edgeWithTrain: { tileX: number; tileY: number } | null = null;
+    for (const edge of world.graph.getAllEdges()) {
+      if (world.sim.hasTrainsOnEdge(edge.id)) {
+        // エッジの中間点を取得
+        const mid = edge.path[Math.floor(edge.path.length / 2)];
+        if (mid !== undefined) {
+          edgeWithTrain = { tileX: mid.x, tileY: mid.y };
+          break;
+        }
+      }
+    }
+
+    if (edgeWithTrain !== null) {
+      const nodesBefore = [...world.graph.getAllNodes()].length;
+      world.toolMode = "station";
+      world.onTileClick(edgeWithTrain.tileX, edgeWithTrain.tileY);
+
+      // 駅は建設されない
+      expect([...world.graph.getAllNodes()].length).toBe(nodesBefore);
+    }
+  });
+
+  it("線路の端点には駅を建設できない(既に駅がある)", () => {
+    const world = createDebugWorld();
+    const s1 = world.graph.addNode(NodeKind.Station, 2, 3, "P");
+    const s2 = world.graph.addNode(NodeKind.Station, 6, 3, "Q");
+    world.graph.addEdge(s1.id, s2.id, [
+      { x: 2, y: 3 }, { x: 3, y: 3 }, { x: 4, y: 3 }, { x: 5, y: 3 }, { x: 6, y: 3 },
+    ]);
+
+    world.toolMode = "station";
+    world.onTileClick(2, 3); // 端点＝既存駅
+    // 「既に駅があります」で拒否される
+    expect(world.toasts.some((t) => t.message.includes("既に駅"))).toBe(true);
   });
 });
 

@@ -23,10 +23,9 @@ export {
 } from "./game-world.js";
 
 export { parseConfigFromURL } from "./game-url.js";
+export { createDefaultConfig } from "./game-world.js";
 
 export type GameEventListener = () => void;
-
-const MAP_SIZE = 512;
 
 /**
  * Game: GameWorld（純粋ロジック）+ レンダリング・入力・カメラのブラウザ層
@@ -50,11 +49,8 @@ export class Game {
     this.renderer = new Renderer(ctx, canvas);
     this.world = new GameWorld(config);
 
-    if (config.debug) {
-      this.camera = new Camera((64 * TILE_SIZE) / 2, (64 * TILE_SIZE) / 2);
-    } else {
-      this.camera = new Camera((MAP_SIZE * TILE_SIZE) / 2, (MAP_SIZE * TILE_SIZE) / 2);
-    }
+    const mapPixels = (config.debug ? 64 : config.mapSize) * TILE_SIZE;
+    this.camera = new Camera(mapPixels / 2, mapPixels / 2);
 
     new InputHandler(canvas, this.camera, {
       requestRender: (): void => { /* continuous */ },
@@ -136,7 +132,17 @@ export class Game {
         tileY: c.centerY,
         name: c.name,
       }));
-      this.renderer.renderLabels(this.world.graph, cityData, this.camera);
+      // 開いている路線詳細の停車駅をハイライトする
+      const highlightNodes = new Set<number>();
+      for (const routeId of this.world.openRouteIds) {
+        const route = this.world.sim.getRoute(routeId);
+        if (route !== undefined) {
+          for (const stopId of route.stops) {
+            highlightNodes.add(stopId);
+          }
+        }
+      }
+      this.renderer.renderLabels(this.world.graph, cityData, this.camera, highlightNodes.size > 0 ? highlightNodes : undefined);
 
       // ウェイポイント仮表示
       if (this.world.selectedNodeId !== null) {

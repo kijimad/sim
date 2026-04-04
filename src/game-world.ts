@@ -14,13 +14,29 @@ import type { ConsistStats } from "./vehicle.js";
 
 // --- 定数 ---
 
-const MAP_SIZE = 512;
+const DEFAULT_MAP_SIZE = 512;
+
+export function createDefaultConfig(overrides?: Partial<GameConfig>): GameConfig {
+  return {
+    seed: Date.now(),
+    debug: false,
+    mapSize: DEFAULT_MAP_SIZE,
+    cityCount: 8,
+    waterLevel: 0.35,
+    mountainLevel: 0.65,
+    ...overrides,
+  };
+}
 
 // --- 型 ---
 
 export interface GameConfig {
   readonly seed: number;
   readonly debug: boolean;
+  readonly mapSize: number;
+  readonly cityCount: number;
+  readonly waterLevel: number;
+  readonly mountainLevel: number;
 }
 
 export const ToolMode = {
@@ -182,9 +198,14 @@ export class GameWorld {
       this.map = new TileMap(64, 64);
       this.setupDebugWorld();
     } else {
-      this.map = new TileMap(MAP_SIZE, MAP_SIZE);
-      generateTerrain(this.map, { seed: config.seed });
-      generateCities(this.map, this.economy, 8, config.seed);
+      const size = config.mapSize;
+      this.map = new TileMap(size, size);
+      generateTerrain(this.map, {
+        seed: config.seed,
+        waterThreshold: config.waterLevel,
+        mountainThreshold: config.mountainLevel,
+      });
+      generateCities(this.map, this.economy, config.cityCount, config.seed);
     }
 
     // 列車到着を経済システムに接続する（複合体単位で貨物を扱う）
@@ -299,6 +320,12 @@ export class GameWorld {
   // --- トースト ---
 
   showToast(message: string): void {
+    // 同じメッセージが直近にある場合は重複させない
+    if (this.toasts[this.toasts.length - 1]?.message === message) return;
+    // 最大5件に制限する
+    if (this.toasts.length >= 5) {
+      this.toasts.splice(0, this.toasts.length - 4);
+    }
     this.toasts.push({ id: this.nextToastId++, message, time: GameWorld.TOAST_DURATION });
   }
 
@@ -894,7 +921,7 @@ export class GameWorld {
     this.selectedNodeId = node.id;
   }
 
-  /** 駅建設ツール: 空き地に駅を配置する */
+  /** 駅建設ツール: 空き地または線路上に駅を配置する */
   private handleStationClick(tileX: number, tileY: number): void {
     if (this.graph.getNodeAt(tileX, tileY) !== undefined) {
       this.showToast("既に駅があります");
@@ -904,10 +931,31 @@ export class GameWorld {
       this.showToast("水上には建設できません");
       return;
     }
-    if (this.isOnEdgePath(tileX, tileY)) {
-      this.showToast("線路上には駅を建設できません");
+
+    // 線路上の場合: エッジを分割して駅を挿入する
+    const edgeHit = this.graph.findClosestEdgePoint(tileX, tileY);
+    if (edgeHit !== null && edgeHit.distance === 0) {
+      // エッジ上に列車がいる場合は建設不可
+      if (this.sim.hasTrainsOnEdge(edgeHit.edge.id)) {
+        this.showToast("列車が走行中のため建設できません");
+        return;
+      }
+      const { kind, name } = this.makeNodeInfo(tileX, tileY);
+      const newNode = this.graph.addNode(kind, tileX, tileY, name);
+      const result = this.graph.splitEdge(edgeHit.edge.id, newNode, edgeHit.pathIndex);
+      if (result !== null) {
+        this.sim.handleEdgeSplit(
+          edgeHit.edge.id,
+          result.edge1,
+          result.edge2,
+          edgeHit.pathIndex,
+          this.graph,
+        );
+      }
       return;
     }
+
+    // 空き地の場合: 通常の駅配置
     const perpError = this.checkPerpendicularPlacement(tileX, tileY);
     if (perpError !== null) {
       this.showToast(perpError);
