@@ -213,12 +213,22 @@ export class Renderer {
         const x2 = adj.tileX * TILE_SIZE + HALF_TILE;
         const y2 = adj.tileY * TILE_SIZE + HALF_TILE;
 
+        // 太い背景線で視認性を上げる
         ctx.beginPath();
         ctx.moveTo(x1, y1);
         ctx.lineTo(x2, y2);
-        ctx.strokeStyle = "rgba(100, 200, 255, 0.5)";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.6)";
+        ctx.lineWidth = 6;
+        ctx.setLineDash([]);
+        ctx.stroke();
+
+        // 前面の破線
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = "rgba(100, 220, 255, 1.0)";
+        ctx.lineWidth = 3;
+        ctx.setLineDash([5, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
       }
