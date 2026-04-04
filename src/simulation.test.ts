@@ -1265,4 +1265,35 @@ describe("駅複合体 - 転線", () => {
     });
     expect(reachedA).toBe(true);
   });
+
+  it("onTrainArriveが複合体内の駅で発火する", () => {
+    const graph = new Graph();
+    // A --edge-- B1  B2 --edge-- C
+    const a = graph.addNode(NodeKind.Station, 0, 0, "A");
+    const b1 = graph.addNode(NodeKind.Station, 5, 0, "B1");
+    const b2 = graph.addNode(NodeKind.Station, 5, 1, "B2");
+    const c = graph.addNode(NodeKind.Station, 10, 1, "C");
+
+    graph.addEdge(a.id, b1.id, makePath(6, 0));
+    graph.addEdge(b2.id, c.id, [
+      { x: 5, y: 1 }, { x: 6, y: 1 }, { x: 7, y: 1 }, { x: 8, y: 1 }, { x: 9, y: 1 }, { x: 10, y: 1 },
+    ]);
+
+    const sim = new Simulation();
+    const route = sim.addRoute([a.id, c.id], RouteMode.Shuttle);
+    sim.addTrain(route.id, graph);
+
+    // 到着した駅を記録する
+    const arrivedAt: number[] = [];
+    sim.onTrainArrive = (_, nodeId): void => { arrivedAt.push(nodeId); };
+
+    // Cに到達するまで実行する
+    const reached = runUntil(sim, graph, () => {
+      return sim.getAllTrains().some((t) => t.state === TrainState.AtNode && t.nodeId === c.id);
+    });
+    expect(reached).toBe(true);
+
+    // A（出発駅ではないのでスキップ）、C（到着）で発火するはず
+    expect(arrivedAt).toContain(c.id);
+  });
 });

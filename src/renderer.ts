@@ -429,6 +429,40 @@ export class Renderer {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
+  /** フローティングテキストを描画する（上方向にフェードアウト） */
+  renderFloatingTexts(
+    texts: readonly { x: number; y: number; text: string; time: number }[],
+    camera: Camera,
+    maxTime: number,
+  ): void {
+    if (texts.length === 0) return;
+    const { ctx, canvas } = this;
+    camera.applyTransform(ctx, canvas);
+
+    for (const ft of texts) {
+      const progress = 1 - ft.time / maxTime;
+      const alpha = Math.max(0, 1 - progress);
+      const offsetY = progress * TILE_SIZE * 1.5;
+
+      const cx = ft.x * TILE_SIZE + HALF_TILE;
+      const cy = ft.y * TILE_SIZE - offsetY;
+
+      ctx.globalAlpha = alpha;
+      ctx.font = `bold ${String(TILE_SIZE * 0.35)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 3;
+      ctx.lineJoin = "round";
+      ctx.strokeText(ft.text, cx, cy);
+      ctx.fillStyle = "#40e040";
+      ctx.fillText(ft.text, cx, cy);
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+  }
+
   renderCities(
     cities: readonly { tileX: number; tileY: number; name: string; radius?: number }[],
     camera: Camera,

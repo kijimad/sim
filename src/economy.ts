@@ -174,6 +174,16 @@ export class Economy {
     return this.stationCargo.get(nodeId)?.waiting.get(resource) ?? 0;
   }
 
+  /** テスト用: 駅に待機貨物を追加する */
+  addWaiting(nodeId: number, resource: Resource, amount: number): void {
+    let cargo = this.stationCargo.get(nodeId);
+    if (cargo === undefined) {
+      cargo = { waiting: new Map() };
+      this.stationCargo.set(nodeId, cargo);
+    }
+    cargo.waiting.set(resource, (cargo.waiting.get(resource) ?? 0) + amount);
+  }
+
   getTotalWaiting(nodeId: number): number {
     const cargo = this.stationCargo.get(nodeId);
     if (cargo === undefined) return 0;
@@ -309,19 +319,21 @@ export class Economy {
 
   /**
    * 列車が駅に到着した時に呼び出される。
+   * complexNodeIds: 停車駅の複合体に含まれる全ノードID
    * demandedResources: この路線の他の停車駅で消費される資源の集合
    */
   trainArrive(
-    nodeId: number,
+    complexNodeIds: readonly number[],
     carrying: Map<number, number>,
     graph: Graph,
     demandedResources: Set<number>,
   ): { earned: number; newCargo: Map<number, number> } {
     let earned = 0;
 
-    const node = graph.getNode(nodeId);
-    if (node !== undefined) {
-      // 近くの消費する建物に貨物を配達する
+    // 複合体内の全駅の範囲内の建物に貨物を配達する
+    for (const nid of complexNodeIds) {
+      const node = graph.getNode(nid);
+      if (node === undefined) continue;
       for (const building of this.buildings) {
         if (building.consumes === null) continue;
         const dx = building.tileX - node.tileX;
@@ -339,13 +351,14 @@ export class Economy {
 
     this._money += earned;
 
-    // 路線の他の停車駅で需要がある資源のみ積み込む
+    // 複合体内の全駅の待機貨物から積み込む
     const newCargo = new Map<number, number>();
-    const stationCargo = this.stationCargo.get(nodeId);
-    if (stationCargo !== undefined) {
+    for (const nid of complexNodeIds) {
+      const stationCargo = this.stationCargo.get(nid);
+      if (stationCargo === undefined) continue;
       for (const [resource, amount] of stationCargo.waiting) {
         if (amount > 0 && demandedResources.has(resource)) {
-          newCargo.set(resource, amount);
+          newCargo.set(resource, (newCargo.get(resource) ?? 0) + amount);
           stationCargo.waiting.set(resource, 0);
         }
       }

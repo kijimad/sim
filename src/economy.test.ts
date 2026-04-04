@@ -45,7 +45,7 @@ describe("Economy", () => {
     // Test the flow: carrying cargo with no consumers earns 0
     const carrying = new Map<number, number>([[Resource.Rice, 10]]);
     const allDemanded = new Set([Resource.Rice, Resource.Iron, Resource.Goods, Resource.Passengers]);
-    const { earned } = economy.trainArrive(station.id, carrying, graph, allDemanded);
+    const { earned } = economy.trainArrive([station.id], carrying, graph, allDemanded);
 
     // No buildings to consume, so no earnings
     expect(earned).toBe(0);
@@ -67,7 +67,7 @@ describe("Economy", () => {
     const totalBefore = economy.getTotalWaiting(station.id);
     if (totalBefore > 0) {
       const allDemanded = new Set([Resource.Rice, Resource.Iron, Resource.Goods, Resource.Passengers]);
-      const { newCargo } = economy.trainArrive(station.id, new Map(), graph, allDemanded);
+      const { newCargo } = economy.trainArrive([station.id], new Map(), graph, allDemanded);
       let cargoTotal = 0;
       for (const amount of newCargo.values()) {
         cargoTotal += amount;
@@ -75,6 +75,51 @@ describe("Economy", () => {
       expect(cargoTotal).toBeGreaterThan(0);
       expect(economy.getTotalWaiting(station.id)).toBe(0);
     }
+  });
+});
+
+describe("Economy - 複合体", () => {
+  it("複合体内の全駅から待機貨物を積み込む", () => {
+    const graph = new Graph();
+    const s1 = graph.addNode(NodeKind.Station, 5, 5, "S#1");
+    const s2 = graph.addNode(NodeKind.Station, 5, 6, "S#2"); // s1の下（隣接）
+
+    const economy = new Economy();
+    // 手動で待機貨物を設定する
+    economy.addWaiting(s1.id, Resource.Rice, 10);
+    economy.addWaiting(s2.id, Resource.Iron, 5);
+
+    const allDemanded = new Set([Resource.Rice, Resource.Iron]);
+    const { newCargo } = economy.trainArrive(
+      [s1.id, s2.id],
+      new Map(),
+      graph,
+      allDemanded,
+    );
+
+    // 両方の駅から積み込まれる
+    expect(newCargo.get(Resource.Rice)).toBe(10);
+    expect(newCargo.get(Resource.Iron)).toBe(5);
+    expect(economy.getTotalWaiting(s1.id)).toBe(0);
+    expect(economy.getTotalWaiting(s2.id)).toBe(0);
+  });
+
+  it("単一駅でも従来通り動作する", () => {
+    const graph = new Graph();
+    const s = graph.addNode(NodeKind.Station, 5, 5, "S");
+
+    const economy = new Economy();
+    economy.addWaiting(s.id, Resource.Rice, 8);
+
+    const { newCargo } = economy.trainArrive(
+      [s.id],
+      new Map(),
+      graph,
+      new Set([Resource.Rice]),
+    );
+
+    expect(newCargo.get(Resource.Rice)).toBe(8);
+    expect(economy.getTotalWaiting(s.id)).toBe(0);
   });
 });
 

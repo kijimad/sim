@@ -1,5 +1,5 @@
 import { Camera } from "./camera.js";
-import { BUILDING_TYPE_NAMES, Economy, RESOURCE_NAMES, Resource, generateCities } from "./economy.js";
+import { BUILDING_TYPE_NAMES, BuildingType, Economy, RESOURCE_NAMES, Resource, generateCities } from "./economy.js";
 import type { GraphNode } from "./graph.js";
 import { Graph, NODE_KIND_NAMES, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
 import { InputHandler } from "./input.js";
@@ -145,6 +145,9 @@ export class Game {
   private hoverTileX: number | null = null;
   private hoverTileY: number | null = null;
 
+  /** フローティング収益テキスト */
+  private floatingTexts: { x: number; y: number; text: string; time: number }[] = [];
+
   private listeners: GameEventListener[] = [];
   private lastTime = performance.now();
   private animFrameId = 0;
@@ -170,13 +173,27 @@ export class Game {
       generateCities(this.map, this.economy, 8, config.seed);
     }
 
-    // 列車到着を経済システムに接続する
+    // 列車到着を経済システムに接続する（複合体単位で貨物を扱う）
     this.sim.onTrainArrive = (train, nodeId): void => {
       const route = this.sim.getRoute(train.routeId);
       const otherStops = route?.stops.filter((s) => s !== nodeId) ?? [];
       const demanded = this.economy.getDemandedResources(otherStops, this.graph);
-      const { newCargo } = this.economy.trainArrive(nodeId, train.cargo, this.graph, demanded);
+      const complexIds = this.graph.getStationComplex(nodeId).map((n) => n.id);
+      const { earned, newCargo } = this.economy.trainArrive(complexIds, train.cargo, this.graph, demanded);
       train.cargo = newCargo;
+
+      // 収益が発生したらフローティングテキストを表示する
+      if (earned > 0) {
+        const node = this.graph.getNode(nodeId);
+        if (node !== undefined) {
+          this.floatingTexts.push({
+            x: node.tileX,
+            y: node.tileY,
+            text: `+$${String(earned)}`,
+            time: 2.0,
+          });
+        }
+      }
     };
 
     // 経路到達不能の通知（同じ路線の連続通知を抑制する）
@@ -237,6 +254,18 @@ export class Game {
     }
     if (changed) {
       this.cachedSnapshot = null;
+    }
+  }
+
+  /** フローティングテキストの残り時間を減らし、期限切れを除去する */
+  private updateFloatingTexts(dt: number): void {
+    for (let i = this.floatingTexts.length - 1; i >= 0; i--) {
+      const ft = this.floatingTexts[i];
+      if (ft === undefined) continue;
+      ft.time -= dt;
+      if (ft.time <= 0) {
+        this.floatingTexts.splice(i, 1);
+      }
     }
   }
 
@@ -310,13 +339,26 @@ export class Game {
     // ノードを確認する（建物より優先）
     const node = this.graph.getNodeAt(tx, ty);
     if (node !== undefined) {
+      // 複合体全体の情報を集計する
+      const complex = this.graph.getStationComplex(node.id);
       const waitingDetail: { resource: string; amount: number }[] = [];
       const allResources = [Resource.Passengers, Resource.Rice, Resource.Iron, Resource.Goods] as const;
       for (const r of allResources) {
-        const amount = this.economy.getWaiting(node.id, r);
-        if (amount > 0) {
-          waitingDetail.push({ resource: RESOURCE_NAMES[r], amount });
+        let total = 0;
+        for (const cn of complex) {
+          total += this.economy.getWaiting(cn.id, r);
         }
+        if (total > 0) {
+          waitingDetail.push({ resource: RESOURCE_NAMES[r], amount: total });
+        }
+      }
+      let complexTrains = 0;
+      let complexTrainsWaiting = 0;
+      let complexWaiting = 0;
+      for (const cn of complex) {
+        complexTrains += this.sim.blocks.getNodeSlotCount(cn.id, this.graph);
+        complexTrainsWaiting += this.sim.blocks.getNodeWaitCount(cn.id, this.graph);
+        complexWaiting += this.economy.getTotalWaiting(cn.id);
       }
       return {
         ...base,
@@ -325,9 +367,9 @@ export class Game {
         nodeName: node.name,
         nodeKind: NODE_KIND_NAMES[node.kind],
         nodeCapacity: node.capacity,
-        nodeTrains: this.sim.blocks.getNodeSlotCount(node.id, this.graph),
-        nodeTrainsWaiting: this.sim.blocks.getNodeWaitCount(node.id, this.graph),
-        nodeWaiting: this.economy.getTotalWaiting(node.id),
+        nodeTrains: complexTrains,
+        nodeTrainsWaiting: complexTrainsWaiting,
+        nodeWaiting: complexWaiting,
         waitingDetail,
       };
     }
@@ -389,6 +431,9 @@ export class Game {
       this.sim.update(dt, this.graph);
       this.economy.update(dt, this.graph, this.map);
 
+      // シミュレーション更新後にReactへ通知する
+      this.notify();
+
 
       this.renderer.render(this.map, this.camera);
       this.renderCities();
@@ -396,15 +441,25 @@ export class Game {
         this.graph,
         this.camera,
         this.selectedNodeId,
-        (nodeId) => ({
-          trainCount: this.sim.getNodeTrainCount(nodeId),
-          waitingCargo: this.economy.getTotalWaiting(nodeId),
-        }),
+        (nodeId) => {
+          const complex = this.graph.getStationComplex(nodeId);
+          let trainCount = 0;
+          let waitingCargo = 0;
+          for (const cn of complex) {
+            trainCount += this.sim.getNodeTrainCount(cn.id);
+            waitingCargo += this.economy.getTotalWaiting(cn.id);
+          }
+          return { trainCount, waitingCargo };
+        },
       );
       this.renderer.renderTrains(
         this.sim.getTrainPositions(this.graph),
         this.camera,
       );
+
+      // フローティング収益テキスト
+      this.updateFloatingTexts(dt);
+      this.renderer.renderFloatingTexts(this.floatingTexts, this.camera, 2.0);
 
       // ウェイポイント仮表示（A*パスのプレビュー + マウス位置まで延長）
       if (this.selectedNodeId !== null) {
@@ -470,6 +525,24 @@ export class Game {
     this.sim.addTrain(route2.id, this.graph);
 
     this.lastRouteId = route1.id;
+
+    // 都市と建物を配置（経済サイクルの確認用）
+    this.economy.addCity("Alpha", 10, 20, 5);
+    this.economy.addCity("Beta", 50, 21, 5);
+    this.economy.addCity("Gamma", 10, 40, 5);
+
+    // Aの近くに農場（米を生産）、Eの近くに商業施設（米を消費）
+    this.economy.addBuilding(BuildingType.Farm, 8, 20);
+    this.economy.addBuilding(BuildingType.Commercial, 48, 21);
+    // Cの近くに鉱山（鉄を生産）、Gの近くに工場（鉄を消費）
+    this.economy.addBuilding(BuildingType.Mine, 8, 40);
+    this.economy.addBuilding(BuildingType.Factory, 48, 50);
+
+    // B複合体の両駅に待機貨物を設定する
+    this.economy.addWaiting(b1.id, Resource.Passengers, 5);
+    this.economy.addWaiting(b2.id, Resource.Rice, 3);
+    // D複合体にも
+    this.economy.addWaiting(d1.id, Resource.Iron, 4);
 
     // カメラをB複合体に合わせる
     this.camera.x = b1.tileX * TILE_SIZE;
