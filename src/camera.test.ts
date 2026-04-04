@@ -48,7 +48,7 @@ describe("Camera", () => {
   it("zoom is clamped to min/max", () => {
     const camera = new Camera(0, 0, 1.0);
     camera.zoomAt(0, 0, 0.01, 800, 600);
-    expect(camera.zoom).toBeGreaterThanOrEqual(0.25);
+    expect(camera.zoom).toBeGreaterThanOrEqual(0.05);
 
     camera.zoomAt(0, 0, 100, 800, 600);
     expect(camera.zoom).toBeLessThanOrEqual(4.0);

@@ -84,50 +84,61 @@ export class Renderer {
 
   render(map: TileMap, camera: Camera): void {
     const { ctx, canvas } = this;
+    const cw = canvas.width;
+    const ch = canvas.height;
 
     // 単位行列変換でクリアする
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, cw, ch);
 
     // 表示可能なタイル範囲を計算する
-    const topLeft = camera.screenToWorld(0, 0, canvas.width, canvas.height);
-    const bottomRight = camera.screenToWorld(
-      canvas.width,
-      canvas.height,
-      canvas.width,
-      canvas.height,
-    );
+    const topLeft = camera.screenToWorld(0, 0, cw, ch);
+    const bottomRight = camera.screenToWorld(cw, ch, cw, ch);
 
     const minTx = Math.max(0, Math.floor(topLeft.wx / TILE_SIZE));
     const minTy = Math.max(0, Math.floor(topLeft.wy / TILE_SIZE));
     const maxTx = Math.min(map.width - 1, Math.floor(bottomRight.wx / TILE_SIZE));
     const maxTy = Math.min(map.height - 1, Math.floor(bottomRight.wy / TILE_SIZE));
 
-    // カメラ変換を適用する
-    camera.applyTransform(ctx, canvas);
+    // スクリーン座標で直接描画する（サブピクセル隙間を防ぐ）
+    const zoom = camera.zoom;
+    const offsetX = -camera.x * zoom + cw / 2;
+    const offsetY = -camera.y * zoom + ch / 2;
+    const tileScreenSize = TILE_SIZE * zoom;
 
-    // 表示可能なタイルを描画する
-    for (let ty = minTy; ty <= maxTy; ty++) {
-      for (let tx = minTx; tx <= maxTx; tx++) {
-        const tile = map.get(tx, ty);
+    // 間引き率
+    const step = tileScreenSize < 2 ? Math.ceil(4 / tileScreenSize) : 1;
+    const blockScreenSize = tileScreenSize * step;
+
+    const alignedMinTx = Math.floor(minTx / step) * step;
+    const alignedMinTy = Math.floor(minTy / step) * step;
+
+    for (let ty = alignedMinTy; ty <= maxTy; ty += step) {
+      for (let tx = alignedMinTx; tx <= maxTx; tx += step) {
+        const sx = Math.min(tx, map.width - 1);
+        const sy = Math.min(ty, map.height - 1);
+        const tile = map.get(sx, sy);
         ctx.fillStyle = TERRAIN_COLORS[tile.terrain];
-        ctx.fillRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+        // ピクセルスナップしてサブピクセル隙間を完全に除去する
+        const screenX = Math.floor(tx * tileScreenSize + offsetX);
+        const screenY = Math.floor(ty * tileScreenSize + offsetY);
+        const screenW = Math.ceil(blockScreenSize) + 1;
+        ctx.fillRect(screenX, screenY, screenW, screenW);
       }
     }
 
-    // 高ズーム時のグリッド線
-    if (camera.zoom > 1.0) {
+    // 十分にズームインしたときのみグリッド線を描画する（1タイルが24px以上）
+    if (tileScreenSize >= 24) {
+      camera.applyTransform(ctx, canvas);
       ctx.strokeStyle = "rgba(0, 0, 0, 0.15)";
-      ctx.lineWidth = 0.5 / camera.zoom;
+      ctx.lineWidth = 0.5 / zoom;
       for (let ty = minTy; ty <= maxTy; ty++) {
         for (let tx = minTx; tx <= maxTx; tx++) {
           ctx.strokeRect(tx * TILE_SIZE, ty * TILE_SIZE, TILE_SIZE, TILE_SIZE);
         }
       }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
     }
-
-    // 変換をリセットする
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   renderGraph(
@@ -469,6 +480,22 @@ export class Renderer {
     const vb = this.getViewBounds(camera);
     camera.applyTransform(ctx, canvas);
 
+    // 超ズームアウト時は列車を小さいドットで描画する
+    if (camera.zoom < 0.2) {
+      const dotR = Math.max(2, 3 / camera.zoom);
+      for (const pos of positions) {
+        const wx = pos.worldX * TILE_SIZE + HALF_TILE;
+        const wy = pos.worldY * TILE_SIZE + HALF_TILE;
+        if (wx < vb.minWx || wx > vb.maxWx || wy < vb.minWy || wy > vb.maxWy) continue;
+        ctx.beginPath();
+        ctx.arc(wx, wy, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = pos.cargoTotal > 0 ? "#d08020" : "#2050d0";
+        ctx.fill();
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      return;
+    }
+
     for (const pos of positions) {
       const wx = pos.worldX * TILE_SIZE + HALF_TILE;
       const wy = pos.worldY * TILE_SIZE + HALF_TILE;
@@ -607,6 +634,33 @@ export class Renderer {
     const { ctx, canvas } = this;
     const vb = this.getViewBounds(camera, TILE_SIZE * 5);
     camera.applyTransform(ctx, canvas);
+
+    // ズームが低いときは駅名を省略し、ドットのみ表示する
+    if (camera.zoom < 0.3) {
+      const dotR = Math.max(2, 4 / camera.zoom);
+      for (const node of graph.getAllNodes()) {
+        if (!this.isPointVisible(node.tileX, node.tileY, vb)) continue;
+        const cx = node.tileX * TILE_SIZE + HALF_TILE;
+        const cy = node.tileY * TILE_SIZE + HALF_TILE;
+        ctx.beginPath();
+        ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
+        ctx.fillStyle = highlightNodeIds?.has(node.id) === true ? "#e0a000" : "#e03030";
+        ctx.fill();
+      }
+      // 街名もドットで表示する
+      for (const city of cities) {
+        if (!this.isPointVisible(city.tileX, city.tileY, vb)) continue;
+        const cx = city.tileX * TILE_SIZE + HALF_TILE;
+        const cy = city.tileY * TILE_SIZE + HALF_TILE;
+        ctx.beginPath();
+        ctx.arc(cx, cy, dotR * 1.5, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(50, 100, 180, 0.8)";
+        ctx.fill();
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      return;
+    }
+
     ctx.font = `bold ${String(TILE_SIZE * 0.3)}px sans-serif`;
 
     for (const node of graph.getAllNodes()) {
@@ -664,6 +718,9 @@ export class Renderer {
     cities: readonly { tileX: number; tileY: number; name: string; radius?: number }[],
     camera: Camera,
   ): void {
+    // ズームが低すぎるときは都市エリア枠を省略する
+    if (camera.zoom < 0.15) return;
+
     const { ctx, canvas } = this;
     const vb = this.getViewBounds(camera, TILE_SIZE * 15);
     camera.applyTransform(ctx, canvas);
@@ -673,7 +730,6 @@ export class Renderer {
       const cx = city.tileX * TILE_SIZE + HALF_TILE;
       const cy = city.tileY * TILE_SIZE + HALF_TILE;
 
-      // 都市エリア
       if (city.radius !== undefined) {
         const r = city.radius * TILE_SIZE;
         ctx.fillStyle = "rgba(200, 160, 60, 0.08)";
@@ -684,7 +740,6 @@ export class Renderer {
         ctx.strokeRect(cx - r, cy - r, r * 2, r * 2);
         ctx.setLineDash([]);
       }
-
     }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -694,6 +749,9 @@ export class Renderer {
     buildings: readonly { tileX: number; tileY: number; type: number }[],
     camera: Camera,
   ): void {
+    // ズームが低すぎるときは建物を省略する
+    if (camera.zoom < 0.2) return;
+
     const { ctx, canvas } = this;
     const vb = this.getViewBounds(camera);
     camera.applyTransform(ctx, canvas);

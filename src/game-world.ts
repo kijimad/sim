@@ -1377,7 +1377,7 @@ export class GameWorld {
     const localConsist = this.addConsistPreset("Cross Local", ["loco_steam", "car_passenger_2nd"]);
 
     // Initial funds
-    this.economy.deductRunningCost(-5000);
+    this.economy.deductRunningCost(-10000);
 
     // Farmville - Portside Line
     const route1 = this.sim.addRoute([a.id, b1.id, e.id], RouteMode.Shuttle, "Farmville - Portside Line");

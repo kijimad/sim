@@ -5,7 +5,7 @@ export class Camera {
   y: number;
   zoom: number;
 
-  private static readonly MIN_ZOOM = 0.25;
+  private static readonly MIN_ZOOM = 0.05;
   private static readonly MAX_ZOOM = 4.0;
 
   constructor(x: number, y: number, zoom = 1.0) {
