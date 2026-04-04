@@ -1,3 +1,4 @@
+import type { CargoItem } from "./economy.js";
 import type { Graph, GraphEdge } from "./graph.js";
 import { getSectionAt, getSectionCount } from "./graph.js";
 import type { PathNode } from "./pathfinding.js";
@@ -58,8 +59,8 @@ export interface Train {
   routeStopIndex: number;
   routeDirection: 1 | -1;
 
-  // 貨物
-  cargo: Map<number, number>;
+  // 貨物（目的地付き）
+  cargo: CargoItem[];
 }
 
 export interface TrainPosition {
@@ -164,7 +165,7 @@ export class Simulation {
       routeId,
       routeStopIndex: 1,
       routeDirection: 1,
-      cargo: new Map(),
+      cargo: [],
       sectionIndex: 0,
     };
     this.trains.set(id, train);
@@ -572,10 +573,10 @@ export class Simulation {
 
   // --- 位置 ---
 
-  private static sumCargo(cargo: Map<number, number>): number {
+  private static sumCargo(cargo: CargoItem[]): number {
     let total = 0;
-    for (const v of cargo.values()) {
-      total += v;
+    for (const item of cargo) {
+      total += item.amount;
     }
     return total;
   }

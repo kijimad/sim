@@ -2,13 +2,14 @@ import { RouteMode } from "../simulation.js";
 
 interface RoutePanelProps {
   readonly stops: readonly number[];
+  readonly stopNames: readonly string[];
   readonly editingRouteId: number | null;
   readonly onConfirm: (mode: RouteMode) => void;
   readonly onCancel: () => void;
   readonly onRemoveStop: (index: number) => void;
 }
 
-export function RoutePanel({ stops, editingRouteId, onConfirm, onCancel, onRemoveStop }: RoutePanelProps) {
+export function RoutePanel({ stops, stopNames, editingRouteId, onConfirm, onCancel, onRemoveStop }: RoutePanelProps) {
   const isEditing = editingRouteId !== null;
 
   return (
@@ -19,11 +20,11 @@ export function RoutePanel({ stops, editingRouteId, onConfirm, onCancel, onRemov
       <div className="route-stops">
         {stops.length === 0
           ? "Click stations to add stops"
-          : stops.map((id, i) => (
-              <span key={`${String(id)}-${String(i)}`} className="stop-editable">
+          : stops.map((_id, i) => (
+              <span key={`${String(_id)}-${String(i)}`} className="stop-editable">
                 {i > 0 && <span className="stop-arrow"> → </span>}
                 <span className="stop-badge">
-                  #{id}
+                  {stopNames[i] ?? `#${String(_id)}`}
                   <button
                     className="stop-remove"
                     onClick={() => { onRemoveStop(i); }}

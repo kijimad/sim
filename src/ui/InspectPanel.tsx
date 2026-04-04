@@ -168,8 +168,8 @@ export function InspectPanel({ info, game }: InspectPanelProps) {
                   <span>{Math.floor(info.nodeWaiting ?? 0)}</span>
                 </div>
                 {info.waitingDetail.map((w) => (
-                  <div className="inspect-row indent" key={w.resource}>
-                    <span className="inspect-label">{w.resource}</span>
+                  <div className="inspect-row indent" key={`${w.resource}-${w.destination}`}>
+                    <span className="inspect-label">{w.resource}→{w.destination}</span>
                     <span>{Math.floor(w.amount)}</span>
                   </div>
                 ))}

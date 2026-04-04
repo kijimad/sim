@@ -43,6 +43,7 @@ export interface RouteInfo {
   readonly id: number;
   readonly name: string;
   readonly stops: readonly number[];
+  readonly stopNames: readonly string[];
   readonly mode: string;
   readonly trainCount: number;
 }
@@ -74,7 +75,7 @@ export interface InspectInfo {
   readonly nodeTrains?: number;
   readonly nodeTrainsWaiting?: number;
   readonly nodeWaiting?: number;
-  readonly waitingDetail?: readonly { resource: string; amount: number }[];
+  readonly waitingDetail?: readonly { resource: string; destination: string; amount: number }[];
   readonly cityName?: string;
   readonly cityPopulation?: number;
   readonly cityProduces?: readonly string[];
@@ -100,6 +101,7 @@ export interface GameSnapshot {
   readonly selectedNodeId: number | null;
   readonly railWaypointCount: number;
   readonly routeStops: readonly number[];
+  readonly routeStopNames: readonly string[];
   readonly editingRouteId: number | null;
   readonly lastRouteId: number | null;
   readonly trainCount: number;
@@ -176,10 +178,9 @@ export class Game {
     // 列車到着を経済システムに接続する（複合体単位で貨物を扱う）
     this.sim.onTrainArrive = (train, nodeId): void => {
       const route = this.sim.getRoute(train.routeId);
-      const otherStops = route?.stops.filter((s) => s !== nodeId) ?? [];
-      const demanded = this.economy.getDemandedResources(otherStops, this.graph);
+      const routeStops = route?.stops ?? [];
       const complexIds = this.graph.getStationComplex(nodeId).map((n) => n.id);
-      const { earned, newCargo } = this.economy.trainArrive(complexIds, train.cargo, this.graph, demanded);
+      const { earned, newCargo } = this.economy.trainArrive(complexIds, train.cargo, this.graph, routeStops);
       train.cargo = newCargo;
 
       // 収益が発生したらフローティングテキストを表示する
@@ -276,6 +277,7 @@ export class Game {
       selectedNodeId: this.selectedNodeId,
       railWaypointCount: this.railWaypoints.length,
       routeStops: [...this.routeStops],
+      routeStopNames: this.routeStops.map((sid) => this.graph.getNode(sid)?.name ?? `#${String(sid)}`),
       editingRouteId: this.editingRouteId,
       lastRouteId: this.lastRouteId,
       trainCount: this.sim.trainCount,
@@ -290,16 +292,18 @@ export class Game {
         id: r.id,
         name: r.name,
         stops: r.stops,
+        stopNames: r.stops.map((sid) => this.graph.getNode(sid)?.name ?? `#${String(sid)}`),
         mode: ROUTE_MODE_NAMES[r.mode],
         trainCount: this.sim.getRouteTrainCount(r.id),
       })),
       trains: this.sim.getAllTrains().map((t) => {
         const detail: { resource: string; amount: number }[] = [];
         let total = 0;
-        for (const [res, amt] of t.cargo) {
-          const r = res as Resource;
-          detail.push({ resource: RESOURCE_NAMES[r], amount: amt });
-          total += amt;
+        for (const item of t.cargo) {
+          const destNode = this.graph.getNode(item.destinationNodeId);
+          const destName = destNode?.name ?? `#${String(item.destinationNodeId)}`;
+          detail.push({ resource: `${RESOURCE_NAMES[item.resource]}→${destName}`, amount: item.amount });
+          total += item.amount;
         }
         const route = this.sim.getRoute(t.routeId);
         const targetNodeId = route?.stops[t.routeStopIndex];
@@ -341,15 +345,22 @@ export class Game {
     if (node !== undefined) {
       // 複合体全体の情報を集計する
       const complex = this.graph.getStationComplex(node.id);
-      const waitingDetail: { resource: string; amount: number }[] = [];
-      const allResources = [Resource.Passengers, Resource.Rice, Resource.Iron, Resource.Goods] as const;
-      for (const r of allResources) {
-        let total = 0;
-        for (const cn of complex) {
-          total += this.economy.getWaiting(cn.id, r);
-        }
-        if (total > 0) {
-          waitingDetail.push({ resource: RESOURCE_NAMES[r], amount: total });
+      // 複合体内の全待機貨物を目的地別に集計する
+      const waitingDetail: { resource: string; destination: string; amount: number }[] = [];
+      for (const cn of complex) {
+        for (const item of this.economy.getWaitingCargo(cn.id)) {
+          if (item.amount <= 0) continue;
+          const destNode = this.graph.getNode(item.destinationNodeId);
+          const destName = destNode?.name ?? `#${String(item.destinationNodeId)}`;
+          // 同じ資源・同じ目的地のエントリを合算する
+          const existing = waitingDetail.find(
+            (w) => w.resource === RESOURCE_NAMES[item.resource] && w.destination === destName,
+          );
+          if (existing !== undefined) {
+            existing.amount += item.amount;
+          } else {
+            waitingDetail.push({ resource: RESOURCE_NAMES[item.resource], destination: destName, amount: item.amount });
+          }
         }
       }
       let complexTrains = 0;
@@ -429,7 +440,7 @@ export class Game {
 
       this.updateToasts(dt);
       this.sim.update(dt, this.graph);
-      this.economy.update(dt, this.graph, this.map);
+      this.economy.update(dt, this.graph, this.map, this.buildRouteConnections());
 
       // シミュレーション更新後にReactへ通知する
       this.notify();
@@ -486,69 +497,143 @@ export class Game {
   /**
    * デバッグ用ワールド
    *
-   * A(10,20) --- B1(30,20)
-   *              B2(31,20) --- E(50,20)
-   *              （B1-B2 転線）
-   *
-   * C(10,40) --- D1(30,40)
-   *              D2(31,40) --- F(50,40) --- G(50,50)
-   *              （D1-D2 転線）
+   * 田園(10,20) -------- 中央#1(30,20)
+   *                      中央#2(30,21) --- 港町(50,21)
+   *                     /（中央#1-#2 転線）
+   *          中央連絡(28,30)
+   *                     \
+   * 鉱山口(10,40) ---- 山手#1(30,40)
+   *                    山手#2(30,41) --- 工業団地(50,41) --- 南港(50,50)
+   *                    （山手#1-#2 転線）
    */
   private setupDebugWorld(): void {
-    // メインライン: A - B複合体 - E
-    const a = this.graph.addNode(NodeKind.Station, 10, 20, "A");
-    const b1 = this.graph.addNode(NodeKind.Station, 30, 20, "B #1");
-    const b2 = this.graph.addNode(NodeKind.Station, 30, 21, "B #2"); // B#1の下（垂直）
-    const e = this.graph.addNode(NodeKind.Station, 50, 21, "E");
+    // メインライン: 田園 - 中央複合体 - 港町
+    const a = this.graph.addNode(NodeKind.Station, 10, 20, "田園");
+    const b1 = this.graph.addNode(NodeKind.Station, 30, 20, "中央 #1");
+    const b2 = this.graph.addNode(NodeKind.Station, 30, 21, "中央 #2"); // #1の下（垂直）
+    const e = this.graph.addNode(NodeKind.Station, 50, 21, "港町");
 
     this.connectNodes(a.id, b1.id);
     this.connectNodes(b2.id, e.id);
 
-    // 支線: C - D複合体 - F - G
-    const c = this.graph.addNode(NodeKind.Station, 10, 40, "C");
-    const d1 = this.graph.addNode(NodeKind.Station, 30, 40, "D #1");
-    const d2 = this.graph.addNode(NodeKind.Station, 30, 41, "D #2"); // D#1の下（垂直）
-    const f = this.graph.addNode(NodeKind.Station, 50, 41, "F");
-    const g = this.graph.addNode(NodeKind.Station, 50, 50, "G");
+    // 支線: 鉱山口 - 山手複合体 - 工業団地 - 南港
+    const c = this.graph.addNode(NodeKind.Station, 10, 40, "鉱山口");
+    const d1 = this.graph.addNode(NodeKind.Station, 30, 40, "山手 #1");
+    const d2 = this.graph.addNode(NodeKind.Station, 30, 41, "山手 #2"); // #1の下（垂直）
+    const f = this.graph.addNode(NodeKind.Station, 50, 41, "工業団地");
+    const g = this.graph.addNode(NodeKind.Station, 50, 50, "南港");
 
     this.connectNodes(c.id, d1.id);
     this.connectNodes(d2.id, f.id);
     this.connectNodes(f.id, g.id);
 
-    // A-E間: B1→B2 転線経由
-    const route1 = this.sim.addRoute([a.id, e.id], RouteMode.Shuttle, "A-E Line");
+    // 縦断線: 中央#2 - 中央連絡 - 山手#1（左側にS字で結ぶ）
+    const mid = this.graph.addNode(NodeKind.Station, 28, 30, "中央連絡");
+    // b2(30,21)→左に出て→下へ→mid(28,30)
+    this.connectNodes(b2.id, mid.id, [{ x: 29, y: 21 }, { x: 28, y: 21 }, { x: 28, y: 29 }]);
+    // mid(28,30)→下→右→下→d1(30,40)に右から入る
+    //   中(28,30)
+    //   |
+    //   (28,39)--(31,39)
+    //                |
+    //   山(30,40)-(31,40)
+    this.connectNodes(mid.id, d1.id, [{ x: 28, y: 31 }, { x: 28, y: 39 }, { x: 31, y: 39 }, { x: 31, y: 40 }]);
+
+    // 田園〜港町線: 中央#1に停車（乗り換え可能）
+    const route1 = this.sim.addRoute([a.id, b1.id, e.id], RouteMode.Shuttle, "田園〜港町線");
     this.sim.addTrain(route1.id, this.graph);
     this.sim.addTrain(route1.id, this.graph);
 
-    // C-G間: D1→D2 転線経由
-    const route2 = this.sim.addRoute([c.id, g.id], RouteMode.Shuttle, "C-G Line");
+    // 鉱山口〜南港線: 山手#2に停車（乗り換え可能）
+    const route2 = this.sim.addRoute([c.id, d1.id, g.id], RouteMode.Shuttle, "鉱山口〜南港線");
     this.sim.addTrain(route2.id, this.graph);
+
+    // 縦断線: 中央#2 - 中央連絡 - 山手#1
+    const route3 = this.sim.addRoute([b2.id, mid.id, d1.id], RouteMode.Shuttle, "縦断線");
+    this.sim.addTrain(route3.id, this.graph);
 
     this.lastRouteId = route1.id;
 
     // 都市と建物を配置（経済サイクルの確認用）
-    this.economy.addCity("Alpha", 10, 20, 5);
-    this.economy.addCity("Beta", 50, 21, 5);
-    this.economy.addCity("Gamma", 10, 40, 5);
+    this.economy.addCity("田園町", 10, 20, 5);
+    this.economy.addCity("港町", 50, 21, 5);
+    this.economy.addCity("鉱山町", 10, 40, 5);
 
-    // Aの近くに農場（米を生産）、Eの近くに商業施設（米を消費）
+    // 田園の近くに農場（米を生産）、港町の近くに商業施設（米を消費）
     this.economy.addBuilding(BuildingType.Farm, 8, 20);
     this.economy.addBuilding(BuildingType.Commercial, 48, 21);
-    // Cの近くに鉱山（鉄を生産）、Gの近くに工場（鉄を消費）
+    // 鉱山口の近くに鉱山（鉄を生産）、南港の近くに工場（鉄を消費）
     this.economy.addBuilding(BuildingType.Mine, 8, 40);
     this.economy.addBuilding(BuildingType.Factory, 48, 50);
 
-    // B複合体の両駅に待機貨物を設定する
-    this.economy.addWaiting(b1.id, Resource.Passengers, 5);
-    this.economy.addWaiting(b2.id, Resource.Rice, 3);
+    // B複合体の両駅に待機貨物を設定する（目的地付き）
+    this.economy.addWaiting(b1.id, Resource.Passengers, 5, e.id);
+    this.economy.addWaiting(b2.id, Resource.Rice, 3, e.id);
     // D複合体にも
-    this.economy.addWaiting(d1.id, Resource.Iron, 4);
+    this.economy.addWaiting(d1.id, Resource.Iron, 4, g.id);
 
     // カメラをB複合体に合わせる
     this.camera.x = b1.tileX * TILE_SIZE;
     this.camera.y = b1.tileY * TILE_SIZE;
   }
 
+
+  /** 各駅から路線経由（乗り換え・複合体経由含む）で到達可能な駅の一覧を構築する */
+  private buildRouteConnections(): Map<number, number[]> {
+    // 同一路線 + 同一複合体の直接接続を構築する
+    const directNeighbors = new Map<number, Set<number>>();
+    const ensure = (id: number): Set<number> => {
+      let set = directNeighbors.get(id);
+      if (set === undefined) {
+        set = new Set();
+        directNeighbors.set(id, set);
+      }
+      return set;
+    };
+
+    // 同一路線上の停車駅は互いに接続
+    for (const route of this.sim.getAllRoutes()) {
+      for (const stopId of route.stops) {
+        const set = ensure(stopId);
+        for (const otherId of route.stops) {
+          if (otherId !== stopId) set.add(otherId);
+        }
+      }
+    }
+
+    // 同一複合体内の駅も互いに接続（乗り換え可能）
+    for (const id of directNeighbors.keys()) {
+      const complex = this.graph.getStationComplex(id);
+      if (complex.length <= 1) continue;
+      const set = ensure(id);
+      for (const cn of complex) {
+        if (cn.id !== id) {
+          set.add(cn.id);
+          ensure(cn.id).add(id);
+        }
+      }
+    }
+
+    // BFSで推移的に到達可能な駅を展開する
+    const connections = new Map<number, number[]>();
+    for (const startId of directNeighbors.keys()) {
+      const visited = new Set<number>([startId]);
+      const queue = [startId];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        const neighbors = directNeighbors.get(current);
+        if (neighbors === undefined) continue;
+        for (const nid of neighbors) {
+          if (visited.has(nid)) continue;
+          visited.add(nid);
+          queue.push(nid);
+        }
+      }
+      visited.delete(startId);
+      connections.set(startId, [...visited]);
+    }
+    return connections;
+  }
 
   private renderCities(): void {
     this.renderer.renderBuildings(this.economy.getAllBuildings(), this.camera);
@@ -1145,8 +1230,13 @@ export class Game {
     return "経路を構築できません";
   }
 
-  private connectNodes(fromId: number, toId: number): void {
-    this.connectNodesViaWaypoints(fromId, toId);
+  private connectNodes(fromId: number, toId: number, waypoints?: { x: number; y: number }[]): void {
+    this.railWaypoints = waypoints ?? [];
+    const error = this.connectNodesViaWaypoints(fromId, toId);
+    this.railWaypoints = [];
+    if (error !== null) {
+      console.warn(`connectNodes(${String(fromId)}, ${String(toId)}): ${error}`);
+    }
   }
 
 }

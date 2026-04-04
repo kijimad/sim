@@ -64,10 +64,10 @@ export function RouteList({ routes, lastRouteId, game }: RouteListProps) {
             <span className="route-mode">{r.mode}</span>
           </div>
           <div className="route-stops-display">
-            {r.stops.map((stopId, i) => (
-              <span key={`${String(stopId)}-${String(i)}`}>
+            {r.stopNames.map((name, i) => (
+              <span key={`${name}-${String(i)}`}>
                 {i > 0 && <span className="stop-arrow"> → </span>}
-                <span className="stop-badge">#{stopId}</span>
+                <span className="stop-badge">{name}</span>
               </span>
             ))}
           </div>

@@ -64,6 +64,7 @@ export function GameUI({ game }: GameUIProps) {
         {snap.toolMode === ToolMode.Route && (
           <RoutePanel
             stops={snap.routeStops}
+            stopNames={snap.routeStopNames}
             editingRouteId={snap.editingRouteId}
             onConfirm={(mode) => { game.confirmRoute(mode); }}
             onCancel={() => { game.cancelRoute(); }}

@@ -64,10 +64,18 @@ export interface City {
   readonly radius: number;
 }
 
+// --- 貨物（目的地付き） ---
+
+export interface CargoItem {
+  readonly resource: Resource;
+  readonly destinationNodeId: number;
+  amount: number;
+}
+
 // --- 駅の貨物 ---
 
 export interface StationCargo {
-  waiting: Map<Resource, number>;
+  waiting: CargoItem[];
 }
 
 // --- 経済 ---
@@ -170,39 +178,58 @@ export class Economy {
 
   // --- 駅の貨物 ---
 
-  getWaiting(nodeId: number, resource: Resource): number {
-    return this.stationCargo.get(nodeId)?.waiting.get(resource) ?? 0;
+  /** 駅の待機貨物一覧を返す */
+  getWaitingCargo(nodeId: number): readonly CargoItem[] {
+    return this.stationCargo.get(nodeId)?.waiting ?? [];
   }
 
-  /** テスト用: 駅に待機貨物を追加する */
-  addWaiting(nodeId: number, resource: Resource, amount: number): void {
-    let cargo = this.stationCargo.get(nodeId);
-    if (cargo === undefined) {
-      cargo = { waiting: new Map() };
-      this.stationCargo.set(nodeId, cargo);
+  /** 指定資源の待機量を返す（全目的地合計） */
+  getWaiting(nodeId: number, resource: Resource): number {
+    const cargo = this.stationCargo.get(nodeId);
+    if (cargo === undefined) return 0;
+    let total = 0;
+    for (const item of cargo.waiting) {
+      if (item.resource === resource) total += item.amount;
     }
-    cargo.waiting.set(resource, (cargo.waiting.get(resource) ?? 0) + amount);
+    return total;
+  }
+
+  /** 駅に目的地付き待機貨物を追加する */
+  addWaiting(nodeId: number, resource: Resource, amount: number, destinationNodeId: number): void {
+    const sc = this.ensureStationCargo(nodeId);
+    // 同じ資源・同じ目的地の既存エントリがあれば合算する
+    const existing = sc.waiting.find(
+      (c) => c.resource === resource && c.destinationNodeId === destinationNodeId,
+    );
+    if (existing !== undefined) {
+      existing.amount += amount;
+    } else {
+      sc.waiting.push({ resource, destinationNodeId, amount });
+    }
   }
 
   getTotalWaiting(nodeId: number): number {
     const cargo = this.stationCargo.get(nodeId);
     if (cargo === undefined) return 0;
     let total = 0;
-    for (const amount of cargo.waiting.values()) {
-      total += amount;
+    for (const item of cargo.waiting) {
+      total += item.amount;
     }
     return total;
   }
 
   // --- シミュレーションティック ---
 
-  update(dt: number, graph: Graph, map: TileMap): void {
+  /**
+   * @param routeConnections 各駅から路線経由で到達可能な駅IDの集合
+   */
+  update(dt: number, graph: Graph, map: TileMap, routeConnections: ReadonlyMap<number, readonly number[]>): void {
     this.productionAccumulator += dt;
     this.growthAccumulator += dt;
 
     if (this.productionAccumulator >= PRODUCTION_INTERVAL) {
       this.productionAccumulator -= PRODUCTION_INTERVAL;
-      this.produce(graph);
+      this.produce(graph, routeConnections);
     }
 
     if (this.growthAccumulator >= CITY_GROWTH_INTERVAL) {
@@ -211,30 +238,61 @@ export class Economy {
     }
   }
 
-  private produce(graph: Graph): void {
+  private produce(graph: Graph, routeConnections: ReadonlyMap<number, readonly number[]>): void {
+    // 消費建物の最寄り駅をキャッシュする（資源 → 駅ID[]）
+    const consumerStations = new Map<Resource, number[]>();
+    for (const building of this.buildings) {
+      if (building.consumes === null) continue;
+      const stationId = this.findNearestStation(building.tileX, building.tileY, graph);
+      if (stationId === undefined) continue;
+      let list = consumerStations.get(building.consumes);
+      if (list === undefined) {
+        list = [];
+        consumerStations.set(building.consumes, list);
+      }
+      if (!list.includes(stationId)) {
+        list.push(stationId);
+      }
+    }
+
+    // 生産建物の貨物を目的地付きで生産する
     for (const building of this.buildings) {
       if (building.produces === null) continue;
 
       const stationId = this.findNearestStation(building.tileX, building.tileY, graph);
       if (stationId === undefined) continue;
 
-      const cargo = this.ensureStationCargo(stationId);
-      const current = cargo.waiting.get(building.produces) ?? 0;
-      // 生産量は建物の人口（労働者数）に比例する
+      const allDests = consumerStations.get(building.produces);
+      if (allDests === undefined || allDests.length === 0) continue;
+
+      // 路線で到達可能な消費先のみに絞る
+      const reachable = routeConnections.get(stationId);
+      const reachableSet = reachable !== undefined ? new Set(reachable) : new Set<number>();
+      const destinations = allDests.filter((d) => reachableSet.has(d));
+      if (destinations.length === 0) continue;
+
       const amount = building.population * 0.1;
-      cargo.waiting.set(building.produces, current + amount);
+      const destId = destinations[Math.floor(Math.random() * destinations.length)]!;
+      this.addWaiting(stationId, building.produces, amount, destId);
     }
 
-    // 住宅は旅客を生産する
+    // 住宅は旅客を生産する（路線で到達可能な駅のみ）
     for (const building of this.buildings) {
       if (building.type !== BuildingType.Residence) continue;
 
       const stationId = this.findNearestStation(building.tileX, building.tileY, graph);
       if (stationId === undefined) continue;
 
-      const cargo = this.ensureStationCargo(stationId);
-      const current = cargo.waiting.get(Resource.Passengers) ?? 0;
-      cargo.waiting.set(Resource.Passengers, current + building.population * 0.05);
+      const reachable = routeConnections.get(stationId);
+      if (reachable === undefined || reachable.length === 0) continue;
+
+      // 自駅以外で到達可能な駅を目的地候補にする
+      const candidates = reachable.filter((id) => id !== stationId);
+      if (candidates.length === 0) continue;
+
+      const amount = building.population * 0.05;
+      const destId = candidates[Math.floor(Math.random() * candidates.length)]!;
+      this.addWaiting(stationId, Resource.Passengers, amount, destId);
     }
   }
 
@@ -298,70 +356,56 @@ export class Economy {
   }
 
   /**
-   * 指定した駅群で消費される資源の種類を返す
-   */
-  getDemandedResources(nodeIds: readonly number[], graph: Graph): Set<number> {
-    const demanded = new Set<number>();
-    for (const nodeId of nodeIds) {
-      const node = graph.getNode(nodeId);
-      if (node === undefined) continue;
-      for (const building of this.buildings) {
-        if (building.consumes === null) continue;
-        const dx = building.tileX - node.tileX;
-        const dy = building.tileY - node.tileY;
-        if (dx * dx + dy * dy <= STATION_RANGE_SQ) {
-          demanded.add(building.consumes);
-        }
-      }
-    }
-    return demanded;
-  }
-
-  /**
    * 列車が駅に到着した時に呼び出される。
    * complexNodeIds: 停車駅の複合体に含まれる全ノードID
-   * demandedResources: この路線の他の停車駅で消費される資源の集合
+   * carrying: 列車が積載している貨物（目的地付き）
+   * routeStops: 路線の全停車駅ID（積載判定用）
    */
   trainArrive(
     complexNodeIds: readonly number[],
-    carrying: Map<number, number>,
-    graph: Graph,
-    demandedResources: Set<number>,
-  ): { earned: number; newCargo: Map<number, number> } {
+    carrying: CargoItem[],
+    _graph: Graph,
+    routeStops: readonly number[],
+  ): { earned: number; newCargo: CargoItem[] } {
     let earned = 0;
+    const complexSet = new Set(complexNodeIds);
 
-    // 複合体内の全駅の範囲内の建物に貨物を配達する
-    for (const nid of complexNodeIds) {
-      const node = graph.getNode(nid);
-      if (node === undefined) continue;
-      for (const building of this.buildings) {
-        if (building.consumes === null) continue;
-        const dx = building.tileX - node.tileX;
-        const dy = building.tileY - node.tileY;
-        if (dx * dx + dy * dy > STATION_RANGE_SQ) continue;
-
-        const consumed = carrying.get(building.consumes) ?? 0;
-        if (consumed > 0) {
-          earned += consumed * DELIVERY_REWARD[building.consumes];
-          building.population += Math.floor(consumed * 0.5);
-          carrying.delete(building.consumes);
-        }
+    // 目的地がこの複合体の駅と一致する貨物を配達する
+    const remaining: CargoItem[] = [];
+    for (const item of carrying) {
+      if (complexSet.has(item.destinationNodeId)) {
+        // 配達成功: 消費建物が範囲内にあれば収益を得る
+        earned += item.amount * DELIVERY_REWARD[item.resource];
+      } else {
+        remaining.push(item);
       }
     }
 
     this._money += earned;
 
-    // 複合体内の全駅の待機貨物から積み込む
-    const newCargo = new Map<number, number>();
+    // 複合体内の全駅の待機貨物から、路線上の駅が目的地のものを積み込む
+    const routeSet = new Set(routeStops);
+    const newCargo = [...remaining];
     for (const nid of complexNodeIds) {
-      const stationCargo = this.stationCargo.get(nid);
-      if (stationCargo === undefined) continue;
-      for (const [resource, amount] of stationCargo.waiting) {
-        if (amount > 0 && demandedResources.has(resource)) {
-          newCargo.set(resource, (newCargo.get(resource) ?? 0) + amount);
-          stationCargo.waiting.set(resource, 0);
+      const sc = this.stationCargo.get(nid);
+      if (sc === undefined) continue;
+      const kept: CargoItem[] = [];
+      for (const item of sc.waiting) {
+        if (item.amount > 0 && routeSet.has(item.destinationNodeId)) {
+          // 同じ資源・同じ目的地の既存積載と合算する
+          const existing = newCargo.find(
+            (c) => c.resource === item.resource && c.destinationNodeId === item.destinationNodeId,
+          );
+          if (existing !== undefined) {
+            existing.amount += item.amount;
+          } else {
+            newCargo.push({ resource: item.resource, destinationNodeId: item.destinationNodeId, amount: item.amount });
+          }
+        } else {
+          kept.push(item);
         }
       }
+      sc.waiting = kept;
     }
 
     return { earned, newCargo };
@@ -407,7 +451,7 @@ export class Economy {
   private ensureStationCargo(nodeId: number): StationCargo {
     let cargo = this.stationCargo.get(nodeId);
     if (cargo === undefined) {
-      cargo = { waiting: new Map() };
+      cargo = { waiting: [] };
       this.stationCargo.set(nodeId, cargo);
     }
     return cargo;
