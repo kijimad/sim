@@ -1,14 +1,20 @@
 import type { Terrain, Tile } from "./types.js";
 
 const CHUNK_SIZE = 64;
+const CHUNK_AREA = CHUNK_SIZE * CHUNK_SIZE;
 
 /** 64x64 タイルのチャンク */
 class TileChunk {
-  readonly data: Uint8Array;
+  /** 地形タイプ（Terrain） */
+  readonly terrain: Uint8Array;
+  /** 標高 [0, 1] */
+  readonly elevation: Float32Array;
 
   constructor() {
-    this.data = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-    // デフォルトは Flat (0)
+    this.terrain = new Uint8Array(CHUNK_AREA);
+    this.elevation = new Float32Array(CHUNK_AREA);
+    // デフォルト標高を平地レベルに設定する
+    this.elevation.fill(0.3);
   }
 }
 
@@ -36,10 +42,11 @@ export class TileMap {
       throw new RangeError(`Tile (${String(x)}, ${String(y)}) out of bounds`);
     }
     const chunk = this.getChunk(x, y);
-    const lx = x % CHUNK_SIZE;
-    const ly = y % CHUNK_SIZE;
-    const terrain = chunk.data[ly * CHUNK_SIZE + lx] as Terrain;
-    return { terrain };
+    const li = (y % CHUNK_SIZE) * CHUNK_SIZE + (x % CHUNK_SIZE);
+    return {
+      terrain: chunk.terrain[li] as Terrain,
+      elevation: chunk.elevation[li] ?? 0,
+    };
   }
 
   set(x: number, y: number, tile: Tile): void {
@@ -47,12 +54,11 @@ export class TileMap {
       throw new RangeError(`Tile (${String(x)}, ${String(y)}) out of bounds`);
     }
     const chunk = this.getChunk(x, y);
-    const lx = x % CHUNK_SIZE;
-    const ly = y % CHUNK_SIZE;
-    chunk.data[ly * CHUNK_SIZE + lx] = tile.terrain;
+    const li = (y % CHUNK_SIZE) * CHUNK_SIZE + (x % CHUNK_SIZE);
+    chunk.terrain[li] = tile.terrain;
+    chunk.elevation[li] = tile.elevation;
   }
 
-  /** 指定座標のチャンクを取得する（遅延生成） */
   private getChunk(x: number, y: number): TileChunk {
     const cx = Math.floor(x / CHUNK_SIZE);
     const cy = Math.floor(y / CHUNK_SIZE);

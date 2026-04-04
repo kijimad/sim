@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { findPath } from "./pathfinding.js";
+import { findPath, calcPathCost } from "./pathfinding.js";
+import type { PathNode } from "./pathfinding.js";
 import { TileMap } from "./tilemap.js";
 import { Terrain } from "./types.js";
 
@@ -10,7 +11,7 @@ function makeMap(
 ): TileMap {
   const map = new TileMap(width, height);
   for (const [x, y, terrain] of overrides) {
-    map.set(x, y, { terrain });
+    map.set(x, y, { terrain, elevation: 0 });
   }
   return map;
 }
@@ -160,5 +161,45 @@ describe("findPath", () => {
     // 2秒以内に完了すること
     expect(elapsed).toBeLessThan(2000);
     expect(path!.length).toBe(3999);
+  });
+
+  it("prefers flat path over steep elevation change", () => {
+    // 全タイルを同じ標高で初期化
+    const map = new TileMap(20, 5);
+    for (let y = 0; y < 5; y++) {
+      for (let x = 0; x < 20; x++) {
+        map.set(x, y, { terrain: Terrain.Flat, elevation: 0 });
+      }
+    }
+    // 中段 y=2 の x=10 に急な崖を配置
+    map.set(10, 2, { terrain: Terrain.Flat, elevation: 1.0 });
+
+    const path = findPath(map, 0, 2, 19, 2);
+    expect(path).not.toBeNull();
+    if (path === null) return;
+
+    // 崖のある (10, 2) を迂回する
+    const goesThrough = path.some((p) => p.x === 10 && p.y === 2);
+    expect(goesThrough).toBe(false);
+    // パスの長さは直線(20)より長い
+    expect(path.length).toBeGreaterThan(20);
+  });
+
+  it("calcPathCost includes elevation cost", () => {
+    const map = new TileMap(5, 1);
+    map.set(0, 0, { terrain: Terrain.Flat, elevation: 0 });
+    map.set(1, 0, { terrain: Terrain.Flat, elevation: 0 });
+    map.set(2, 0, { terrain: Terrain.Flat, elevation: 0.5 });
+    map.set(3, 0, { terrain: Terrain.Flat, elevation: 0.5 });
+    map.set(4, 0, { terrain: Terrain.Flat, elevation: 0 });
+
+    const flatPath: PathNode[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }];
+    const slopePath: PathNode[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 2, y: 0 }];
+
+    const flatCost = calcPathCost(map, flatPath);
+    const slopeCost = calcPathCost(map, slopePath);
+
+    // 急斜面を含むパスのほうがコストが高い
+    expect(slopeCost).toBeGreaterThan(flatCost);
   });
 });

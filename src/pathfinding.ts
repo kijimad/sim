@@ -12,22 +12,33 @@ export const TERRAIN_COST: Record<Terrain, number> = {
   [Terrain.Water]: Infinity,
 };
 
-/** パスの建設コストを計算する */
+/** 1タイルの標高差あたりの追加建設コスト。大きいほど等高線に沿ったルートが選ばれる */
+const SLOPE_COST_FACTOR = 500;
+
+/** パスの建設コストを計算する（地形コスト + 高低差コスト） */
 export function calcPathCost(map: TileMap, path: readonly PathNode[]): number {
   let cost = 0;
-  for (const p of path) {
-    if (map.inBounds(p.x, p.y)) {
-      const tc = TERRAIN_COST[map.get(p.x, p.y).terrain];
-      cost += tc === Infinity ? 0 : tc;
+  for (let i = 0; i < path.length; i++) {
+    const p = path[i];
+    if (p === undefined || !map.inBounds(p.x, p.y)) continue;
+    const tile = map.get(p.x, p.y);
+    const tc = TERRAIN_COST[tile.terrain];
+    cost += tc === Infinity ? 0 : tc;
+    // 隣接タイルとの高低差コスト
+    if (i > 0) {
+      const prev = path[i - 1];
+      if (prev !== undefined && map.inBounds(prev.x, prev.y)) {
+        const prevTile = map.get(prev.x, prev.y);
+        cost += Math.abs(tile.elevation - prevTile.elevation) * SLOPE_COST_FACTOR;
+      }
     }
   }
-  return cost;
+  return Math.round(cost);
 }
 
 function heuristic(ax: number, ay: number, bx: number, by: number): number {
-  const dx = Math.abs(ax - bx);
-  const dy = Math.abs(ay - by);
-  return Math.min(dx, dy) * 2 + Math.abs(dx - dy);
+  // admissible なヒューリスティック: 最小コスト（平地1/タイル）× マンハッタン距離
+  return Math.abs(ax - bx) + Math.abs(ay - by);
 }
 
 const DX = [0, 1, 0, -1];
@@ -175,11 +186,16 @@ export function findPath(
       const moveCost = TERRAIN_COST[tile.terrain];
       if (moveCost === Infinity) continue;
 
-      // ジグザグ誘導: 同じ方向に連続するとわずかなペナルティ
+      // 高低差コスト: 標高差が大きいほど建設費が高い
+      const currentTile = map.get(cx, cy);
+      const elevDiff = Math.abs(tile.elevation - currentTile.elevation);
+      const slopeCost = elevDiff * SLOPE_COST_FACTOR;
+
+      // ジグザグ誘導
       const stepDir = (DX[d] ?? 0) !== 0 ? 0 : 1;
       const straightPenalty = (currentDir >= 0 && currentDir === stepDir) ? 0.01 : 0;
 
-      const tentativeG = currentG + moveCost + straightPenalty;
+      const tentativeG = currentG + moveCost + slopeCost + straightPenalty;
       if (tentativeG < (gScore[neighborKey] ?? Infinity)) {
         gScore[neighborKey] = tentativeG;
         cameFrom[neighborKey] = currentKey;

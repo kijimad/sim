@@ -4,17 +4,56 @@ import type { PathNode } from "./pathfinding.js";
 import type { TrainPosition } from "./simulation.js";
 import { getSignalPositions } from "./graph.js";
 import type { TileMap } from "./tilemap.js";
-import { Terrain } from "./types.js";
+import type { Terrain } from "./types.js";
 import { getVehicleType } from "./vehicle.js";
 
 export const TILE_SIZE = 32;
 const HALF_TILE = TILE_SIZE / 2;
 
-const TERRAIN_COLORS: Record<Terrain, string> = {
-  [Terrain.Flat]: "#7ec850",
-  [Terrain.Mountain]: "#8b7355",
-  [Terrain.Water]: "#4a80b4",
-};
+/** 地形タイプ + 標高 + ヒルシェード係数から色を返す */
+function terrainColor(terrain: Terrain, elevation: number, shade: number = 1.0): string {
+  let r: number, g: number, b: number;
+  // Water
+  if (terrain === 2) {
+    const t = Math.max(0, Math.min(1, elevation / 0.3));
+    r = 30 + t * 30;
+    g = 55 + t * 50;
+    b = 130 + t * 50;
+  // Mountain
+  } else if (terrain === 1) {
+    const t = Math.max(0, Math.min(1, (elevation - 0.4) / 0.5));
+    r = 120 + t * 100;
+    g = 100 + t * 110;
+    b = 60 + t * 170;
+  // Flat: 連続グラデーション
+  } else {
+    const t = Math.max(0, Math.min(1, elevation));
+    r = 40 + t * 130;
+    g = 100 + t * 60 - t * t * 40;
+    b = 30 + t * 30;
+  }
+  // ヒルシェード適用（0.4〜1.4 の範囲でクランプ）
+  const s = Math.max(0.4, Math.min(1.4, shade));
+  return rgb(r * s, g * s, b * s);
+}
+
+// Canvas に描画する色文字列の一時バッファ（毎フレームの文字列生成を最小化）
+const colorCache = new Map<number, string>();
+
+function rgb(r: number, g: number, b: number): string {
+  // 6bit 精度に落として色数を増やさずにバンディングを軽減
+  const ri = Math.round(Math.max(0, Math.min(255, r)));
+  const gi = Math.round(Math.max(0, Math.min(255, g)));
+  const bi = Math.round(Math.max(0, Math.min(255, b)));
+  const key = (ri << 16) | (gi << 8) | bi;
+  let cached = colorCache.get(key);
+  if (cached === undefined) {
+    cached = `rgb(${String(ri)},${String(gi)},${String(bi)})`;
+    colorCache.set(key, cached);
+  }
+  return cached;
+}
+
 
 const BUILDING_COLORS: Record<number, string> = {
   0: "#c08040", // 住宅 - 茶
@@ -118,7 +157,16 @@ export class Renderer {
         const sx = Math.min(tx, map.width - 1);
         const sy = Math.min(ty, map.height - 1);
         const tile = map.get(sx, sy);
-        ctx.fillStyle = TERRAIN_COLORS[tile.terrain];
+
+        // ヒルシェード: 右隣・下隣との標高差から陰影を計算する
+        const hR = sx + step < map.width ? map.get(sx + step, sy).elevation : tile.elevation;
+        const hD = sy + step < map.height ? map.get(sx, sy + step).elevation : tile.elevation;
+        const dx = (tile.elevation - hR) * 6;
+        const dy = (tile.elevation - hD) * 6;
+        // 光源方向: 左上（-1, -1 正規化）
+        const shade = 1.0 + (dx * -0.707 + dy * -0.707) * 0.5;
+
+        ctx.fillStyle = terrainColor(tile.terrain, tile.elevation, shade);
         // ピクセルスナップしてサブピクセル隙間を完全に除去する
         const screenX = Math.floor(tx * tileScreenSize + offsetX);
         const screenY = Math.floor(ty * tileScreenSize + offsetY);

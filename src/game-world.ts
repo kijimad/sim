@@ -17,15 +17,17 @@ import type { ConsistStats } from "./vehicle.js";
 const DEFAULT_MAP_SIZE = 512;
 
 export function createDefaultConfig(overrides?: Partial<GameConfig>): GameConfig {
-  return {
+  const defaults: GameConfig = {
     seed: Date.now(),
     debug: false,
     mapSize: DEFAULT_MAP_SIZE,
     cityCount: 8,
-    waterLevel: 0.35,
-    mountainLevel: 0.65,
-    ...overrides,
+    waterLevel: 0.2,
+    mountainLevel: 0.5,
+    relief: 1.0,
   };
+  if (overrides === undefined) return defaults;
+  return { ...defaults, ...overrides };
 }
 
 // --- 型 ---
@@ -37,6 +39,8 @@ export interface GameConfig {
   readonly cityCount: number;
   readonly waterLevel: number;
   readonly mountainLevel: number;
+  /** 起伏の強さ [0.5=なだらか, 1.0=標準, 2.0=急峻] */
+  readonly relief: number;
 }
 
 export const ToolMode = {
@@ -208,6 +212,7 @@ export class GameWorld {
         seed: config.seed,
         waterThreshold: config.waterLevel,
         mountainThreshold: config.mountainLevel,
+        relief: config.relief,
       });
       generateCities(this.map, this.economy, config.cityCount, config.seed);
     }

@@ -14,4 +14,6 @@ export const TERRAIN_NAMES: Record<Terrain, string> = {
 
 export interface Tile {
   readonly terrain: Terrain;
+  /** 標高 [0, 1] */
+  readonly elevation: number;
 }

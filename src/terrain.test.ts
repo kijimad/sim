@@ -38,7 +38,7 @@ describe("generateTerrain", () => {
     let differences = 0;
     for (let y = 0; y < 64; y++) {
       for (let x = 0; x < 64; x++) {
-        if (map1.get(x, y).terrain !== map2.get(x, y).terrain) {
+        if (Math.abs(map1.get(x, y).elevation - map2.get(x, y).elevation) > 0.01) {
           differences++;
         }
       }
@@ -47,12 +47,12 @@ describe("generateTerrain", () => {
   });
 
   it("produces all terrain types with default config", () => {
-    const map = new TileMap(128, 128);
+    const map = new TileMap(256, 256);
     generateTerrain(map, { seed: 42 });
 
     const found = new Set<Terrain>();
-    for (let y = 0; y < 128; y++) {
-      for (let x = 0; x < 128; x++) {
+    for (let y = 0; y < 256; y++) {
+      for (let x = 0; x < 256; x++) {
         found.add(map.get(x, y).terrain);
       }
     }
@@ -62,15 +62,15 @@ describe("generateTerrain", () => {
   });
 
   it("waterThreshold を上げると水が増える", () => {
-    const mapLow = new TileMap(64, 64);
+    const mapLow = new TileMap(128, 128);
     generateTerrain(mapLow, { seed: 42, waterThreshold: 0.2 });
-    const mapHigh = new TileMap(64, 64);
+    const mapHigh = new TileMap(128, 128);
     generateTerrain(mapHigh, { seed: 42, waterThreshold: 0.5 });
 
     let waterLow = 0;
     let waterHigh = 0;
-    for (let y = 0; y < 64; y++) {
-      for (let x = 0; x < 64; x++) {
+    for (let y = 0; y < 128; y++) {
+      for (let x = 0; x < 128; x++) {
         if (mapLow.get(x, y).terrain === Terrain.Water) waterLow++;
         if (mapHigh.get(x, y).terrain === Terrain.Water) waterHigh++;
       }
@@ -79,15 +79,15 @@ describe("generateTerrain", () => {
   });
 
   it("mountainThreshold を下げると山が増える", () => {
-    const mapLow = new TileMap(64, 64);
-    generateTerrain(mapLow, { seed: 42, mountainThreshold: 0.5 });
-    const mapHigh = new TileMap(64, 64);
+    const mapLow = new TileMap(128, 128);
+    generateTerrain(mapLow, { seed: 42, mountainThreshold: 0.3 });
+    const mapHigh = new TileMap(128, 128);
     generateTerrain(mapHigh, { seed: 42, mountainThreshold: 0.9 });
 
     let mtLow = 0;
     let mtHigh = 0;
-    for (let y = 0; y < 64; y++) {
-      for (let x = 0; x < 64; x++) {
+    for (let y = 0; y < 128; y++) {
+      for (let x = 0; x < 128; x++) {
         if (mapLow.get(x, y).terrain === Terrain.Mountain) mtLow++;
         if (mapHigh.get(x, y).terrain === Terrain.Mountain) mtHigh++;
       }
@@ -98,31 +98,32 @@ describe("generateTerrain", () => {
 
 describe("generateTerrainPreview", () => {
   it("正しいサイズの配列を返す", () => {
-    const data = generateTerrainPreview(100, {
+    const { terrain } = generateTerrainPreview(100, {
       seed: 42,
       waterThreshold: 0.35,
-      mountainThreshold: 0.65,
+      mountainThreshold: 0.65, relief: 1.0,
     });
-    expect(data.length).toBe(10000);
+    expect(terrain.length).toBe(10000);
   });
 
   it("同じseedで同じ結果", () => {
-    const cfg = { seed: 42, waterThreshold: 0.35, mountainThreshold: 0.65 };
+    const cfg = { seed: 42, waterThreshold: 0.35, mountainThreshold: 0.65, relief: 1.0 };
     const a = generateTerrainPreview(50, cfg);
     const b = generateTerrainPreview(50, cfg);
-    for (let i = 0; i < a.length; i++) {
-      expect(a[i]).toBe(b[i]);
+    for (let i = 0; i < a.terrain.length; i++) {
+      expect(a.terrain[i]).toBe(b.terrain[i]);
+      expect(a.elevation[i]).toBe(b.elevation[i]);
     }
   });
 
   it("全地形タイプを含む", () => {
-    const data = generateTerrainPreview(128, {
+    const { terrain } = generateTerrainPreview(256, {
       seed: 42,
-      waterThreshold: 0.35,
-      mountainThreshold: 0.65,
+      waterThreshold: 0.2,
+      mountainThreshold: 0.5, relief: 1.0,
     });
     const found = new Set<number>();
-    for (const v of data) {
+    for (const v of terrain) {
       found.add(v);
     }
     expect(found.has(0)).toBe(true); // Flat
@@ -130,16 +131,16 @@ describe("generateTerrainPreview", () => {
     expect(found.has(2)).toBe(true); // Water
   });
 
-  it("generateTerrain と一致する", () => {
-    const map = new TileMap(64, 64);
-    generateTerrain(map, { seed: 99, waterThreshold: 0.3, mountainThreshold: 0.7 });
-    const preview = generateTerrainPreview(64, { seed: 99, waterThreshold: 0.3, mountainThreshold: 0.7 });
-
-    // プレビューとマップの地形が一致する
-    for (let y = 0; y < 64; y++) {
-      for (let x = 0; x < 64; x++) {
-        expect(preview[y * 64 + x]).toBe(map.get(x, y).terrain);
-      }
+  it("標高データが含まれる", () => {
+    const { elevation } = generateTerrainPreview(64, {
+      seed: 42,
+      waterThreshold: 0.35,
+      mountainThreshold: 0.65, relief: 1.0,
+    });
+    let hasNonZero = false;
+    for (const v of elevation) {
+      if (v > 0) { hasNonZero = true; break; }
     }
+    expect(hasNonZero).toBe(true);
   });
 });

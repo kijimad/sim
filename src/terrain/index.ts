@@ -1,0 +1,94 @@
+import type { TileMap } from "../tilemap.js";
+import { createContext } from "./context.js";
+import { createClassifyBiome } from "./stages/classify.js";
+import { STANDARD } from "./pipeline.js";
+import type { TerrainPipeline } from "./pipeline.js";
+
+export type { TerrainPipeline } from "./pipeline.js";
+export { STANDARD, ARCHIPELAGO, FLAT_RIVERS, ALL_PIPELINES } from "./pipeline.js";
+export type { StageContext, TerrainStage } from "./context.js";
+export { createContext, createRng } from "./context.js";
+
+export interface TerrainGenConfig {
+  readonly seed: number;
+  readonly waterThreshold: number;
+  readonly mountainThreshold: number;
+  /** 起伏の強さ [0.5=なだらか, 1.0=標準, 2.0=急峻] */
+  readonly relief: number;
+  /** 実マップサイズ（プレビュー用: ノイズスケールの基準） */
+  readonly targetSize?: number;
+  readonly pipeline?: TerrainPipeline;
+}
+
+const DEFAULT_CONFIG: TerrainGenConfig = {
+  seed: 42,
+  waterThreshold: 0.2,
+  mountainThreshold: 0.5,
+  relief: 1.0,
+};
+
+/** TileMap に地形を生成する */
+export function generateTerrain(
+  map: TileMap,
+  config: Partial<TerrainGenConfig> = {},
+): void {
+  const cfg = { ...DEFAULT_CONFIG, ...config };
+  const ctx = createContext(map.width, map.height, cfg.seed, cfg.relief);
+  const pipeline = cfg.pipeline ?? STANDARD;
+
+  // パイプライン実行
+  for (const stage of pipeline.stages) {
+    stage(ctx);
+  }
+
+  // バイオーム分類
+  const classify = createClassifyBiome({
+    waterThreshold: cfg.waterThreshold,
+    mountainThreshold: cfg.mountainThreshold,
+  });
+  const biomes = classify(ctx);
+
+  // TileMap に書き込む（地形タイプ + 標高）
+  for (let y = 0; y < map.height; y++) {
+    for (let x = 0; x < map.width; x++) {
+      const i = y * map.width + x;
+      const terrain = biomes[i];
+      if (terrain !== undefined) {
+        map.set(x, y, { terrain, elevation: ctx.elevation[i] ?? 0 });
+      }
+    }
+  }
+}
+
+export interface TerrainPreviewData {
+  /** 地形タイプ（0=Flat, 1=Mountain, 2=Water） */
+  readonly terrain: Uint8Array;
+  /** 標高 [0, 1] */
+  readonly elevation: Float32Array;
+}
+
+/** プレビュー用の地形データ生成 */
+export function generateTerrainPreview(
+  previewSize: number,
+  config: TerrainGenConfig,
+): TerrainPreviewData {
+  const noiseSize = config.targetSize ?? previewSize;
+  const ctx = createContext(previewSize, previewSize, config.seed, config.relief, noiseSize);
+  const pipeline = config.pipeline ?? STANDARD;
+
+  for (const stage of pipeline.stages) {
+    stage(ctx);
+  }
+
+  const classify = createClassifyBiome({
+    waterThreshold: config.waterThreshold,
+    mountainThreshold: config.mountainThreshold,
+  });
+  const biomes = classify(ctx);
+
+  const terrain = new Uint8Array(previewSize * previewSize);
+  for (let i = 0; i < biomes.length; i++) {
+    terrain[i] = biomes[i] ?? 0;
+  }
+  return { terrain, elevation: ctx.elevation };
+}

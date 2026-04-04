@@ -1,6 +1,6 @@
 import { Button, Card, ConfigProvider, InputNumber, Slider, Space, Typography, theme } from "antd";
 import { PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GameConfig } from "../game-world.js";
 import { createDefaultConfig } from "../game-world.js";
 import { generateTerrainPreview } from "../terrain.js";
@@ -9,17 +9,113 @@ const { Title, Text } = Typography;
 
 const PREVIEW_SIZE = 200;
 
-const TERRAIN_COLORS: readonly [number, number, number][] = [
-  [126, 200, 80],  // Flat - 緑
-  [139, 115, 85],  // Mountain - 茶
-  [74, 128, 180],  // Water - 青
-];
 
-function TerrainPreview({ seed, waterLevel, mountainLevel }: {
-  seed: number;
-  waterLevel: number;
-  mountainLevel: number;
+/** 地形タイプ + 標高から色を返す（連続グラデーション） */
+function tileColor(terrainType: number, h: number): [number, number, number] {
+  if (terrainType === 2) {
+    const t = Math.max(0, Math.min(1, h / 0.3));
+    return [30 + t * 30, 55 + t * 50, 130 + t * 50];
+  }
+  if (terrainType === 1) {
+    const t = Math.max(0, Math.min(1, (h - 0.4) / 0.5));
+    return [120 + t * 100, 100 + t * 110, 60 + t * 170];
+  }
+  const t = Math.max(0, Math.min(1, h));
+  return [40 + t * 130, 100 + t * 60 - t * t * 40, 30 + t * 30];
+}
+
+function TerrainPreview2D({ terrain: terrainData, elevation: elevationData }: {
+  terrain: Uint8Array;
+  elevation: Float32Array;
 }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas === null) return;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) return;
+
+    const imgData = ctx.createImageData(PREVIEW_SIZE, PREVIEW_SIZE);
+    for (let i = 0; i < elevationData.length; i++) {
+      const t = terrainData[i] ?? 0;
+      const elev = elevationData[i] ?? 0;
+      const [r, g, b] = tileColor(t, elev);
+      const idx = i * 4;
+      imgData.data[idx] = r;
+      imgData.data[idx + 1] = g;
+      imgData.data[idx + 2] = b;
+      imgData.data[idx + 3] = 255;
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }, [terrainData, elevationData]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={PREVIEW_SIZE}
+      height={PREVIEW_SIZE}
+      style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)" }}
+    />
+  );
+}
+
+/** 陰影起伏図（ヒルシェード）プレビュー */
+function HillshadePreview({ elevation: elev, size }: { elevation: Float32Array; size: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (canvas === null) return;
+    const ctx = canvas.getContext("2d");
+    if (ctx === null) return;
+
+    const imgData = ctx.createImageData(size, size);
+    // 光源方向（左上から）
+    const lightX = -1;
+    const lightY = -1;
+    const lightLen = Math.sqrt(lightX * lightX + lightY * lightY);
+    const lx = lightX / lightLen;
+    const ly = lightY / lightLen;
+
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = y * size + x;
+        const h = elev[i] ?? 0;
+        // 勾配を計算する
+        const hR = x < size - 1 ? (elev[i + 1] ?? 0) : h;
+        const hD = y < size - 1 ? (elev[i + size] ?? 0) : h;
+        const dx = (h - hR) * 8; // スケーリングで陰影を強調
+        const dy = (h - hD) * 8;
+
+        // 光源方向との内積で明るさを決定する
+        const shade = 0.5 + (dx * lx + dy * ly) * 0.5;
+        const v = Math.max(0, Math.min(255, Math.round(shade * 255)));
+
+        const idx = i * 4;
+        imgData.data[idx] = v;
+        imgData.data[idx + 1] = v;
+        imgData.data[idx + 2] = v;
+        imgData.data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+  }, [elev, size]);
+
+  return (
+    <canvas
+      ref={canvasRef}
+      width={size}
+      height={size}
+      style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)" }}
+    />
+  );
+}
+
+const PREVIEW_3D_W = 300;
+const PREVIEW_3D_H = 200;
+
+function Terrain3DPreview({ terrain: terrainData, elevation, size }: { terrain: Uint8Array; elevation: Float32Array; size: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const draw = useCallback(() => {
@@ -28,24 +124,70 @@ function TerrainPreview({ seed, waterLevel, mountainLevel }: {
     const ctx = canvas.getContext("2d");
     if (ctx === null) return;
 
-    const data = generateTerrainPreview(PREVIEW_SIZE, {
-      seed,
-      waterThreshold: waterLevel,
-      mountainThreshold: mountainLevel,
-    });
+    ctx.fillStyle = "#1a1a2e";
+    ctx.fillRect(0, 0, PREVIEW_3D_W, PREVIEW_3D_H);
 
-    const imgData = ctx.createImageData(PREVIEW_SIZE, PREVIEW_SIZE);
-    for (let i = 0; i < data.length; i++) {
-      const t = data[i] ?? 0;
-      const color = TERRAIN_COLORS[t] ?? [0, 0, 0];
-      const idx = i * 4;
-      imgData.data[idx] = color[0];
-      imgData.data[idx + 1] = color[1];
-      imgData.data[idx + 2] = color[2];
-      imgData.data[idx + 3] = 255;
+    // 斜め投影パラメータ
+    const step = Math.max(1, Math.floor(size / 80)); // サンプリング間隔
+    const cols = Math.floor(size / step);
+    const rows = Math.floor(size / step);
+    const cellW = PREVIEW_3D_W / cols * 0.9;
+    const cellH = cellW * 0.5;
+    const heightScale = 80;
+    const offsetX = PREVIEW_3D_W * 0.5;
+    const offsetY = 30;
+
+    // 奥から手前に描画（ペインターズアルゴリズム）
+    for (let gy = 0; gy < rows; gy++) {
+      for (let gx = 0; gx < cols; gx++) {
+        const tx = gx * step;
+        const ty = gy * step;
+        if (tx >= size || ty >= size) continue;
+
+        const elev = elevation[ty * size + tx] ?? 0;
+        const elevR = tx + step < size ? (elevation[ty * size + tx + step] ?? 0) : elev;
+        const elevB = ty + step < size ? (elevation[(ty + step) * size + tx] ?? 0) : elev;
+        const elevBR = (tx + step < size && ty + step < size) ? (elevation[(ty + step) * size + tx + step] ?? 0) : elev;
+
+        // 斜め投影: x は右に、y は右下に
+        const isoX = (gx - gy) * cellW * 0.5 + offsetX;
+        const isoY = (gx + gy) * cellH * 0.5 + offsetY;
+
+        const h0 = elev * heightScale;
+        const h1 = elevR * heightScale;
+        const h2 = elevBR * heightScale;
+        const h3 = elevB * heightScale;
+
+        // 上面の4頂点
+        const x0 = isoX;
+        const y0 = isoY - h0;
+        const x1 = isoX + cellW * 0.5;
+        const y1 = isoY + cellH * 0.5 - h1;
+        const x2 = isoX;
+        const y2 = isoY + cellH - h2;
+        const x3 = isoX - cellW * 0.5;
+        const y3 = isoY + cellH * 0.5 - h3;
+
+        const avgH = (elev + elevR + elevB + elevBR) / 4;
+        // 中心タイルの terrain タイプを使う
+        const t = terrainData[ty * size + tx] ?? 0;
+        const [r, g, b] = tileColor(t, avgH);
+
+        // 法線による陰影
+        const shade = 0.7 + (h0 - h2) * 0.3;
+        const factor = Math.max(0.3, Math.min(1.3, shade));
+
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.lineTo(x3, y3);
+        ctx.closePath();
+        ctx.fillStyle = `rgb(${String(Math.round(r * factor))},${String(Math.round(g * factor))},${String(Math.round(b * factor))})`;
+        ctx.fill();
+      }
     }
-    ctx.putImageData(imgData, 0, 0);
-  }, [seed, waterLevel, mountainLevel]);
+  }, [terrainData, elevation, size]);
 
   useEffect(() => {
     draw();
@@ -54,9 +196,9 @@ function TerrainPreview({ seed, waterLevel, mountainLevel }: {
   return (
     <canvas
       ref={canvasRef}
-      width={PREVIEW_SIZE}
-      height={PREVIEW_SIZE}
-      style={{ width: PREVIEW_SIZE, height: PREVIEW_SIZE, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)" }}
+      width={PREVIEW_3D_W}
+      height={PREVIEW_3D_H}
+      style={{ width: PREVIEW_3D_W, height: PREVIEW_3D_H, borderRadius: 4, border: "1px solid rgba(255,255,255,0.15)" }}
     />
   );
 }
@@ -69,8 +211,18 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
   const [seed, setSeed] = useState(Date.now());
   const [mapSize, setMapSize] = useState(512);
   const [cityCount, setCityCount] = useState(8);
-  const [waterLevel, setWaterLevel] = useState(0.35);
-  const [mountainLevel, setMountainLevel] = useState(0.65);
+  const [waterLevel, setWaterLevel] = useState(0.2);
+  const [mountainLevel, setMountainLevel] = useState(0.5);
+  const [relief, setRelief] = useState(1.0);
+
+  // プレビューデータを生成（2D/3D で共有）
+  const previewData = useMemo(() => generateTerrainPreview(PREVIEW_SIZE, {
+    seed,
+    waterThreshold: waterLevel,
+    mountainThreshold: mountainLevel,
+    relief,
+    targetSize: mapSize,
+  }), [seed, waterLevel, mountainLevel, relief, mapSize]);
 
   const randomSeed = (): void => {
     setSeed(Math.floor(Math.random() * 1000000));
@@ -79,11 +231,11 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
   const handleStart = (): void => {
     onStart(createDefaultConfig({
       seed,
-      debug: false,
       mapSize,
       cityCount,
       waterLevel,
       mountainLevel,
+      relief,
     }));
   };
 
@@ -139,9 +291,21 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
                 <Slider min={0} max={0.6} step={0.05} value={waterLevel} onChange={setWaterLevel} />
               </div>
 
-              <div style={{ marginBottom: 24 }}>
+              <div style={{ marginBottom: 16 }}>
                 <Text strong>Mountain Level</Text>
                 <Slider min={0.4} max={1.0} step={0.05} value={mountainLevel} onChange={setMountainLevel} />
+              </div>
+
+              <div style={{ marginBottom: 24 }}>
+                <Text strong>Relief: {relief.toFixed(1)}</Text>
+                <Slider
+                  min={0.5}
+                  max={2.0}
+                  step={0.1}
+                  value={relief}
+                  onChange={setRelief}
+                  marks={{ 0.5: "Flat", 1.0: "Normal", 2.0: "Extreme" }}
+                />
               </div>
 
               <Space>
@@ -158,8 +322,12 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
 
             {/* 右: プレビュー */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              <Text type="secondary" style={{ fontSize: 12 }}>Preview</Text>
-              <TerrainPreview seed={seed} waterLevel={waterLevel} mountainLevel={mountainLevel} />
+              <Text type="secondary" style={{ fontSize: 12 }}>Color</Text>
+              <TerrainPreview2D terrain={previewData.terrain} elevation={previewData.elevation} />
+              <Text type="secondary" style={{ fontSize: 12 }}>Hillshade</Text>
+              <HillshadePreview elevation={previewData.elevation} size={PREVIEW_SIZE} />
+              <Text type="secondary" style={{ fontSize: 12 }}>3D</Text>
+              <Terrain3DPreview terrain={previewData.terrain} elevation={previewData.elevation} size={PREVIEW_SIZE} />
             </div>
           </div>
         </Card>
