@@ -6,9 +6,23 @@ import { getSignalPositions } from "./graph.js";
 import type { TileMap } from "./tilemap.js";
 import type { Terrain } from "./types.js";
 import { getVehicleType } from "./vehicle.js";
+import type { ViewMode } from "./game-world.js";
 
 export const TILE_SIZE = 32;
 const HALF_TILE = TILE_SIZE / 2;
+
+/** バイオームIDごとの表示色 [r, g, b] */
+const BIOME_COLORS: Record<number, [number, number, number]> = {
+  0: [100, 180, 60],   // Plains: 緑
+  1: [160, 130, 100],  // Highland: 茶
+  2: [60, 100, 180],   // Bay: 青
+  3: [220, 200, 120],  // Desert: 黄土
+  4: [200, 180, 140],  // Tombolo: 砂色
+  5: [20, 40, 120],    // Ocean: 深い青
+  6: [80, 160, 80],    // Island: 明るい緑
+  7: [70, 130, 200],   // Lake: 水色
+  8: [140, 80, 60],    // Canyon: 赤茶
+};
 
 /** 地形タイプ + 標高 + ヒルシェード係数から色を返す */
 function terrainColor(terrain: Terrain, elevation: number, shade: number = 1.0): string {
@@ -121,7 +135,7 @@ export class Renderer {
     ctx.fillText(text, x, y);
   }
 
-  render(map: TileMap, camera: Camera): void {
+  render(map: TileMap, camera: Camera, viewMode: ViewMode = "normal"): void {
     const { ctx, canvas } = this;
     const cw = canvas.width;
     const ch = canvas.height;
@@ -158,15 +172,25 @@ export class Renderer {
         const sy = Math.min(ty, map.height - 1);
         const tile = map.get(sx, sy);
 
-        // ヒルシェード: 右隣・下隣との標高差から陰影を計算する
+        // ヒルシェード計算（通常モードと陰影起伏図で使用する）
         const hR = sx + step < map.width ? map.get(sx + step, sy).elevation : tile.elevation;
         const hD = sy + step < map.height ? map.get(sx, sy + step).elevation : tile.elevation;
-        const dx = (tile.elevation - hR) * 6;
-        const dy = (tile.elevation - hD) * 6;
-        // 光源方向: 左上（-1, -1 正規化）
-        const shade = 1.0 + (dx * -0.707 + dy * -0.707) * 0.5;
+        const hdx = (tile.elevation - hR) * 6;
+        const hdy = (tile.elevation - hD) * 6;
+        const shade = 1.0 + (hdx * -0.707 + hdy * -0.707) * 0.5;
 
-        ctx.fillStyle = terrainColor(tile.terrain, tile.elevation, shade);
+        if (viewMode === "biome") {
+          // バイオーム表示: バイオームIDに応じた色
+          const bc = BIOME_COLORS[tile.biomeId] ?? [128, 128, 128];
+          const s = Math.max(0.5, Math.min(1.3, shade));
+          ctx.fillStyle = rgb(bc[0] * s, bc[1] * s, bc[2] * s);
+        } else if (viewMode === "hillshade") {
+          // 陰影起伏図: グレースケール
+          const v = Math.max(0, Math.min(255, Math.round(shade * 128)));
+          ctx.fillStyle = rgb(v, v, v);
+        } else {
+          ctx.fillStyle = terrainColor(tile.terrain, tile.elevation, shade);
+        }
         // ピクセルスナップしてサブピクセル隙間を完全に除去する
         const screenX = Math.floor(tx * tileScreenSize + offsetX);
         const screenY = Math.floor(ty * tileScreenSize + offsetY);

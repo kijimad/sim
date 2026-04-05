@@ -8,8 +8,21 @@ export const Biome = {
   Ocean: 5,
   Island: 6,
   Lake: 7,
+  Canyon: 8,
 } as const;
 export type Biome = (typeof Biome)[keyof typeof Biome];
+
+export const BIOME_NAMES: Record<number, string> = {
+  [Biome.Plains]: "Plains",
+  [Biome.Highland]: "Highland",
+  [Biome.Bay]: "Bay",
+  [Biome.Desert]: "Desert",
+  [Biome.Tombolo]: "Tombolo",
+  [Biome.Ocean]: "Ocean",
+  [Biome.Island]: "Island",
+  [Biome.Lake]: "Lake",
+  [Biome.Canyon]: "Canyon",
+};
 
 /** 地形生成パイプラインのコンテキスト */
 export interface StageContext {

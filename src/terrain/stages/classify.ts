@@ -1,4 +1,5 @@
 import type { StageContext } from "../context.js";
+import { Biome } from "../context.js";
 import { Terrain } from "../../types.js";
 
 export interface ClassifyConfig {
@@ -18,13 +19,22 @@ export function createClassifyBiome(config?: Partial<ClassifyConfig>): (ctx: Sta
   const cfg = { ...DEFAULT_CLASSIFY, ...config };
 
   return (ctx: StageContext): Terrain[] => {
-    const { width: w, height: h, elevation, flow } = ctx;
+    const { width: w, height: h, elevation, flow, biomeId } = ctx;
     const size = w * h;
 
-    // 基本分類
+    // バイオームIDを尊重した分類
     const result: Terrain[] = new Array<Terrain>(size);
     for (let i = 0; i < size; i++) {
+      const biome = biomeId[i] as Biome;
       const elev = elevation[i] ?? 0;
+
+      // 水域バイオームは常に Water にする（標高に関わらず）
+      if (biome === Biome.Ocean || biome === Biome.Bay || biome === Biome.Lake) {
+        result[i] = Terrain.Water;
+        continue;
+      }
+
+      // 陸地バイオームは標高で Flat/Mountain を判定する
       if (elev < cfg.waterThreshold) {
         result[i] = Terrain.Water;
       } else if (elev > cfg.mountainThreshold) {

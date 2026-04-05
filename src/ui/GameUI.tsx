@@ -1,12 +1,12 @@
 import { useSyncExternalStore, useState, useCallback, useEffect, useRef } from "react";
 import { Button, ConfigProvider, message, Segmented, Space, Statistic, Tag, theme, Typography } from "antd";
 import {
-  SearchOutlined, ToolOutlined,
+  SearchOutlined, ToolOutlined, EyeOutlined,
   UnorderedListOutlined, CarOutlined, AppstoreOutlined,
   DollarOutlined, TeamOutlined, BankOutlined,
 } from "@ant-design/icons";
 import type { Game, GameSnapshot } from "../game.js";
-import { ToolMode } from "../game.js";
+import { ToolMode, ViewMode } from "../game.js";
 import { RouteDetailWindows, RouteList } from "./RouteList.js";
 import { RoutePanel } from "./RoutePanel.js";
 import { FloatingWindow } from "./FloatingWindow.js";
@@ -24,6 +24,12 @@ const toolOptions = [
   { value: ToolMode.Inspect, label: "Inspect", icon: <SearchOutlined /> },
   { value: ToolMode.Station, label: "Station", icon: <ToolOutlined /> },
   { value: ToolMode.Rail, label: "Rail", icon: <ToolOutlined /> },
+];
+
+const viewOptions = [
+  { value: ViewMode.Normal, label: "Normal" },
+  { value: ViewMode.Biome, label: "Biome" },
+  { value: ViewMode.Hillshade, label: "Hillshade" },
 ];
 
 export function GameUI({ game }: GameUIProps) {
@@ -70,6 +76,15 @@ export function GameUI({ game }: GameUIProps) {
                 value={snap.toolMode}
                 options={toolOptions}
                 onChange={(v) => { setTool(v); }}
+              />
+            </div>
+            <div className="toolbar-group">
+              <Text type="secondary" style={{ fontSize: 10 }}><EyeOutlined /> View</Text>
+              <Segmented
+                size="small"
+                value={snap.viewMode}
+                options={viewOptions}
+                onChange={(v) => { game.setViewMode(v); }}
               />
             </div>
             <div className="toolbar-group">

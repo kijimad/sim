@@ -9,10 +9,13 @@ class TileChunk {
   readonly terrain: Uint8Array;
   /** 標高 [0, 1] */
   readonly elevation: Float32Array;
+  /** バイオームID */
+  readonly biomeId: Uint8Array;
 
   constructor() {
     this.terrain = new Uint8Array(CHUNK_AREA);
     this.elevation = new Float32Array(CHUNK_AREA);
+    this.biomeId = new Uint8Array(CHUNK_AREA);
     // デフォルト標高を平地レベルに設定する
     this.elevation.fill(0.3);
   }
@@ -46,17 +49,19 @@ export class TileMap {
     return {
       terrain: chunk.terrain[li] as Terrain,
       elevation: chunk.elevation[li] ?? 0,
+      biomeId: chunk.biomeId[li] ?? 0,
     };
   }
 
-  set(x: number, y: number, tile: Tile): void {
+  set(x: number, y: number, tile: Partial<Tile> & { terrain: Terrain }): void {
     if (!this.inBounds(x, y)) {
       throw new RangeError(`Tile (${String(x)}, ${String(y)}) out of bounds`);
     }
     const chunk = this.getChunk(x, y);
     const li = (y % CHUNK_SIZE) * CHUNK_SIZE + (x % CHUNK_SIZE);
     chunk.terrain[li] = tile.terrain;
-    chunk.elevation[li] = tile.elevation;
+    if (tile.elevation !== undefined) chunk.elevation[li] = tile.elevation;
+    if (tile.biomeId !== undefined) chunk.biomeId[li] = tile.biomeId;
   }
 
   private getChunk(x: number, y: number): TileChunk {

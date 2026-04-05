@@ -149,6 +149,7 @@ function TerrainSection({ info }: { info: InspectInfo }) {
     <Descriptions column={1} size="small" colon={false}>
       <Descriptions.Item label="Tile">({info.tileX}, {info.tileY})</Descriptions.Item>
       <Descriptions.Item label="Terrain">{info.terrain}</Descriptions.Item>
+      <Descriptions.Item label="Biome">{info.biome}</Descriptions.Item>
     </Descriptions>
   );
 }

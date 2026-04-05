@@ -16,4 +16,6 @@ export interface Tile {
   readonly terrain: Terrain;
   /** 標高 [0, 1] */
   readonly elevation: number;
+  /** バイオームID */
+  readonly biomeId: number;
 }

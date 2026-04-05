@@ -4,7 +4,7 @@ import type { GraphNode } from "./graph.js";
 import { Graph, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
 import { findPath, calcPathCost } from "./pathfinding.js";
 import { ROUTE_MODE_NAMES, RouteMode, Simulation, TrainState } from "./simulation.js";
-import { generateTerrain } from "./terrain/index.js";
+import { generateTerrain, BIOME_NAMES } from "./terrain/index.js";
 import { TileMap } from "./tilemap.js";
 import { TERRAIN_NAMES, Terrain } from "./types.js";
 import { BUILDING_TYPE_NAMES, RESOURCE_NAMES } from "./economy.js";
@@ -54,6 +54,15 @@ export const ToolMode = {
 
 export type ToolMode = (typeof ToolMode)[keyof typeof ToolMode];
 
+/** 地形表示モード */
+export const ViewMode = {
+  Normal: "normal",
+  Biome: "biome",
+  Hillshade: "hillshade",
+} as const;
+
+export type ViewMode = (typeof ViewMode)[keyof typeof ViewMode];
+
 export interface RouteInfo {
   readonly id: number;
   readonly name: string;
@@ -102,6 +111,7 @@ export interface InspectInfo {
   readonly cityProduces?: readonly string[];
   readonly cityConsumes?: readonly string[];
   readonly terrain?: string;
+  readonly biome?: string;
   readonly tileX?: number;
   readonly tileY?: number;
   readonly buildingType?: string;
@@ -139,6 +149,7 @@ export interface ConsistPresetInfo {
 }
 
 export interface GameSnapshot {
+  readonly viewMode: ViewMode;
   readonly toolMode: ToolMode;
   readonly selectedNodeId: number | null;
   readonly railWaypointCount: number;
@@ -174,6 +185,7 @@ export class GameWorld {
   readonly economy: Economy;
   readonly map: TileMap;
 
+  viewMode: ViewMode = ViewMode.Normal;
   toolMode: ToolMode = ToolMode.Inspect;
   railWaypoints: { x: number; y: number }[] = [];
   selectedNodeId: number | null = null;
@@ -369,6 +381,7 @@ export class GameWorld {
 
   getSnapshot(): GameSnapshot {
     return {
+      viewMode: this.viewMode,
       toolMode: this.toolMode,
       selectedNodeId: this.selectedNodeId,
       railWaypointCount: this.railWaypoints.length,
@@ -462,6 +475,7 @@ export class GameWorld {
       tileX: tx,
       tileY: ty,
       terrain: TERRAIN_NAMES[tile.terrain],
+      biome: BIOME_NAMES[tile.biomeId] ?? "Unknown",
     };
 
     // ノードを確認する（建物より優先）
@@ -555,6 +569,10 @@ export class GameWorld {
   }
 
   // --- アクション ---
+
+  setViewMode(mode: ViewMode): void {
+    this.viewMode = mode;
+  }
 
   setToolMode(mode: ToolMode): void {
     this.toolMode = mode;

@@ -1,5 +1,5 @@
 import type { StageContext } from "../context.js";
-import { createGradientNoise } from "./continent.js";
+import { createGradientNoise } from "./noise.js";
 
 /**
  * 粒子ベース水力侵食:
@@ -142,7 +142,7 @@ function deposit(
 export function flattenValleys(ctx: StageContext): void {
   const { width: w, height: h, elevation, flow } = ctx;
   const size = w * h;
-  const MOUNTAIN_TH = 0.5;
+  const MOUNTAIN_TH = 0.35;
   const FLOW_MIN = 50;
 
   // 各セルから最寄りの大河川までの距離・標高・流量を計算する（BFS）

@@ -1,5 +1,5 @@
 import { Camera } from "./camera.js";
-import type { GameConfig, GameSnapshot, ToolMode } from "./game-world.js";
+import type { GameConfig, GameSnapshot, ToolMode, ViewMode } from "./game-world.js";
 import { GameWorld } from "./game-world.js";
 import type { RouteMode } from "./simulation.js";
 import { InputHandler } from "./input.js";
@@ -19,6 +19,7 @@ export type {
 
 export {
   ToolMode,
+  ViewMode,
   GameWorld,
 } from "./game-world.js";
 
@@ -103,7 +104,7 @@ export class Game {
       this.notify();
 
       // レンダリング
-      this.renderer.render(this.world.map, this.camera);
+      this.renderer.render(this.world.map, this.camera, this.world.viewMode);
       this.renderCities();
       this.renderer.renderGraph(
         this.world.graph,
@@ -189,6 +190,11 @@ export class Game {
   }
 
   // --- UI アクション（GameWorld に委譲してnotify） ---
+
+  setViewMode(mode: ViewMode): void {
+    this.world.setViewMode(mode);
+    this.notify();
+  }
 
   setToolMode(mode: ToolMode): void {
     this.world.setToolMode(mode);

@@ -1,13 +1,13 @@
 import type { TileMap } from "../tilemap.js";
 import { createContext } from "./context.js";
 import { createClassifyBiome } from "./stages/classify.js";
-import { STANDARD } from "./pipeline.js";
+import { RANDOM } from "./pipeline.js";
 import type { TerrainPipeline } from "./pipeline.js";
 
 export type { TerrainPipeline } from "./pipeline.js";
-export { STANDARD, TWO_ISLANDS, ARCHIPELAGO, ELONGATED, FLAT_RIVERS, ALL_PIPELINES } from "./pipeline.js";
+export { RANDOM, CONTINENT, TWO_ISLANDS, ARCHIPELAGO, FLAT_RIVERS, ALL_PIPELINES } from "./pipeline.js";
 export type { StageContext, TerrainStage } from "./context.js";
-export { createContext, createRng, Biome } from "./context.js";
+export { createContext, createRng, Biome, BIOME_NAMES } from "./context.js";
 
 export interface TerrainGenConfig {
   readonly seed: number;
@@ -34,7 +34,7 @@ export function generateTerrain(
 ): void {
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const ctx = createContext(map.width, map.height, cfg.seed, cfg.relief);
-  const pipeline = cfg.pipeline ?? STANDARD;
+  const pipeline = cfg.pipeline ?? RANDOM;
 
   // パイプライン実行
   for (const stage of pipeline.stages) {
@@ -54,7 +54,7 @@ export function generateTerrain(
       const i = y * map.width + x;
       const terrain = biomes[i];
       if (terrain !== undefined) {
-        map.set(x, y, { terrain, elevation: ctx.elevation[i] ?? 0 });
+        map.set(x, y, { terrain, elevation: ctx.elevation[i] ?? 0, biomeId: ctx.biomeId[i] ?? 0 });
       }
     }
   }
@@ -74,7 +74,7 @@ export function generateTerrainPreview(
 ): TerrainPreviewData {
   const noiseSize = config.targetSize ?? previewSize;
   const ctx = createContext(previewSize, previewSize, config.seed, config.relief, noiseSize);
-  const pipeline = config.pipeline ?? STANDARD;
+  const pipeline = config.pipeline ?? RANDOM;
 
   for (const stage of pipeline.stages) {
     stage(ctx);
