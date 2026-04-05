@@ -17,6 +17,10 @@ function tileColor(terrainType: number, h: number): [number, number, number] {
     const t = Math.max(0, Math.min(1, h / 0.3));
     return [30 + t * 30, 55 + t * 50, 130 + t * 50];
   }
+  if (terrainType === 3) {
+    const t = Math.max(0, Math.min(1, h));
+    return [210 + t * 30, 190 + t * 20, 130 + t * 30];
+  }
   if (terrainType === 1) {
     const t = Math.max(0, Math.min(1, (h - 0.4) / 0.5));
     return [120 + t * 100, 100 + t * 110, 60 + t * 170];

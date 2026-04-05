@@ -1,27 +1,34 @@
 /** バイオームID */
 export const Biome = {
-  Plains: 0,
+  Hills: 0,
   Highland: 1,
   Bay: 2,
-  Desert: 3,
-  Tombolo: 4,
-  Ocean: 5,
-  Island: 6,
-  Lake: 7,
-  Canyon: 8,
+  Beach: 3,
+  Ocean: 4,
+  Island: 5,
+  Lake: 6,
+  Canyon: 7,
+  Wetland: 8,
+  Cliff: 9,
+  Plateau: 10,
+  Alluvial: 11,
 } as const;
 export type Biome = (typeof Biome)[keyof typeof Biome];
 
 export const BIOME_NAMES: Record<number, string> = {
-  [Biome.Plains]: "Plains",
+  [Biome.Hills]: "Hills",
   [Biome.Highland]: "Highland",
   [Biome.Bay]: "Bay",
-  [Biome.Desert]: "Desert",
-  [Biome.Tombolo]: "Tombolo",
+  [Biome.Beach]: "Beach",
+
   [Biome.Ocean]: "Ocean",
   [Biome.Island]: "Island",
   [Biome.Lake]: "Lake",
   [Biome.Canyon]: "Canyon",
+  [Biome.Wetland]: "Wetland",
+  [Biome.Cliff]: "Cliff",
+  [Biome.Plateau]: "Plateau",
+  [Biome.Alluvial]: "Alluvial",
 };
 
 /** 地形生成パイプラインのコンテキスト */

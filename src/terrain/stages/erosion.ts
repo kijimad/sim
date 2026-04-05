@@ -143,7 +143,8 @@ export function flattenValleys(ctx: StageContext): void {
   const { width: w, height: h, elevation, flow } = ctx;
   const size = w * h;
   const MOUNTAIN_TH = 0.35;
-  const FLOW_MIN = 50;
+  // 大河川のみ谷の形成対象にする（小さい川では平坦化しない）
+  const FLOW_MIN = 500;
 
   // 各セルから最寄りの大河川までの距離・標高・流量を計算する（BFS）
   const riverDist = new Float32Array(size).fill(Infinity);
@@ -252,10 +253,13 @@ export function flattenValleys(ctx: StageContext): void {
         elevation[i] = targetElev;
       }
     } else if (!isMountain && dist < FLAT_RADIUS) {
-      // 氾濫原: 川に向かってなだらかに下がるプロファイル
+      // 氾濫原: 大河川ほど広くなだらかに平坦化する
+      const rFlow = riverFlow[i] ?? 0;
+      // 流量が大きいほど平坦化が強い（小さい川はほとんど平坦化しない）
+      const flatStrength = Math.min(1, Math.log(rFlow / FLOW_MIN) * 0.3);
       const t = dist / FLAT_RADIUS;
       const flatProfile = Math.sqrt(t);
-      const targetElev = rElev + (here - rElev) * flatProfile;
+      const targetElev = rElev + (here - rElev) * (1 - (1 - flatProfile) * flatStrength);
       if (targetElev < here) {
         elevation[i] = targetElev;
       }

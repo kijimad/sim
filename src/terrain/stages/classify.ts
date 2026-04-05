@@ -34,6 +34,18 @@ export function createClassifyBiome(config?: Partial<ClassifyConfig>): (ctx: Sta
         continue;
       }
 
+      // Desert / Tombolo バイオームは標高に応じて Sand / Mountain を使い分ける
+      if (biome === Biome.Beach) {
+        if (elev < cfg.waterThreshold) {
+          result[i] = Terrain.Water;
+        } else if (elev > cfg.mountainThreshold) {
+          result[i] = Terrain.Mountain;
+        } else {
+          result[i] = Terrain.Sand;
+        }
+        continue;
+      }
+
       // 陸地バイオームは標高で Flat/Mountain を判定する
       if (elev < cfg.waterThreshold) {
         result[i] = Terrain.Water;
@@ -57,9 +69,7 @@ export function createClassifyBiome(config?: Partial<ClassifyConfig>): (ctx: Sta
         // 流量比の対数で川幅を決定する
         const logFlow = Math.log(f / cfg.riverFlowThreshold);
         const riverRadius = isMountainRiver
-          // 渓谷: 細い（1〜3）
           ? Math.min(3, Math.max(1, Math.floor(logFlow * 1.0)))
-          // 平地: 下流ほど太い（1〜8）
           : Math.min(8, Math.max(1, Math.floor(logFlow * 2.5)));
 
         for (let dy = -riverRadius; dy <= riverRadius; dy++) {

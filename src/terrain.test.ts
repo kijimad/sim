@@ -8,7 +8,7 @@ describe("generateTerrain", () => {
     const map = new TileMap(32, 32);
     generateTerrain(map, { seed: 123 });
 
-    const validTerrains = new Set([Terrain.Flat, Terrain.Mountain, Terrain.Water]);
+    const validTerrains = new Set([Terrain.Flat, Terrain.Mountain, Terrain.Water, Terrain.Sand]);
     for (let y = 0; y < 32; y++) {
       for (let x = 0; x < 32; x++) {
         expect(validTerrains.has(map.get(x, y).terrain)).toBe(true);

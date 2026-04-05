@@ -10,6 +10,7 @@ export const TERRAIN_COST: Record<Terrain, number> = {
   [Terrain.Flat]: 1,
   [Terrain.Mountain]: 5,
   [Terrain.Water]: Infinity,
+  [Terrain.Sand]: 1.5,
 };
 
 /** 1タイルの標高差あたりの追加建設コスト。大きいほど等高線に沿ったルートが選ばれる */

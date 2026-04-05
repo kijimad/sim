@@ -13,15 +13,18 @@ const HALF_TILE = TILE_SIZE / 2;
 
 /** バイオームIDごとの表示色 [r, g, b] */
 const BIOME_COLORS: Record<number, [number, number, number]> = {
-  0: [100, 180, 60],   // Plains: 緑
+  0: [80, 150, 60],    // Hills: 丘陵の緑
   1: [160, 130, 100],  // Highland: 茶
   2: [60, 100, 180],   // Bay: 青
-  3: [220, 200, 120],  // Desert: 黄土
-  4: [200, 180, 140],  // Tombolo: 砂色
-  5: [20, 40, 120],    // Ocean: 深い青
-  6: [80, 160, 80],    // Island: 明るい緑
-  7: [70, 130, 200],   // Lake: 水色
-  8: [140, 80, 60],    // Canyon: 赤茶
+  3: [220, 200, 140],  // Beach: 砂色
+  4: [20, 40, 120],    // Ocean: 深い青
+  5: [80, 160, 80],    // Island: 明るい緑
+  6: [70, 130, 200],   // Lake: 水色
+  7: [140, 80, 60],    // Canyon: 赤茶
+  8: [60, 120, 100],   // Wetland: 暗い緑
+  9: [150, 140, 130],  // Cliff: 灰色
+  10: [140, 160, 100], // Plateau: 黄緑
+  11: [130, 180, 90],  // Alluvial: 明るい緑
 };
 
 /** 地形タイプ + 標高 + ヒルシェード係数から色を返す */
@@ -33,6 +36,12 @@ function terrainColor(terrain: Terrain, elevation: number, shade: number = 1.0):
     r = 30 + t * 30;
     g = 55 + t * 50;
     b = 130 + t * 50;
+  // Sand
+  } else if (terrain === 3) {
+    const t = Math.max(0, Math.min(1, elevation));
+    r = 210 + t * 30;
+    g = 190 + t * 20;
+    b = 130 + t * 30;
   // Mountain
   } else if (terrain === 1) {
     const t = Math.max(0, Math.min(1, (elevation - 0.4) / 0.5));

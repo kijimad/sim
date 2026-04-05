@@ -2,6 +2,7 @@ export const Terrain = {
   Flat: 0,
   Mountain: 1,
   Water: 2,
+  Sand: 3,
 } as const;
 
 export type Terrain = (typeof Terrain)[keyof typeof Terrain];
@@ -10,6 +11,7 @@ export const TERRAIN_NAMES: Record<Terrain, string> = {
   [Terrain.Flat]: "Flat",
   [Terrain.Mountain]: "Mountain",
   [Terrain.Water]: "Water",
+  [Terrain.Sand]: "Sand",
 };
 
 export interface Tile {
