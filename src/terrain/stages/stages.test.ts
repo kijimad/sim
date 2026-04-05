@@ -159,6 +159,7 @@ describe("フルパイプライン統合テスト", () => {
       else if (b === Terrain.Mountain) mountain++;
       else water++;
     }
+    // 平地系（Flat + Sand）が最も多いこと
     expect(flat).toBeGreaterThan(mountain);
     expect(flat).toBeGreaterThan(water);
   });

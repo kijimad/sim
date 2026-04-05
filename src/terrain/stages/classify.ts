@@ -13,7 +13,7 @@ const DEFAULT_CLASSIFY: ClassifyConfig = {
   riverFlowThreshold: 3000,
 };
 
-/** バイオーム分類: 河川は flow に応じた幅を持ち、山地でも渓谷を刻む */
+/** バイオーム分類: 河川は flow に応じた幅を持ち、山地でも渓谷を刻む。水辺に砂浜を配置する */
 export function createClassifyBiome(config?: Partial<ClassifyConfig>): (ctx: StageContext) => Terrain[] {
   const cfg = { ...DEFAULT_CLASSIFY, ...config };
 

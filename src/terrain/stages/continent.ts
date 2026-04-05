@@ -1,18 +1,21 @@
 import type { StageContext } from "../context.js";
 
+/** マスク関数の型: 正規化座標(0〜1)を受け取り、0〜1のマスク値を返す */
+type MaskFn = (nx: number, ny: number, rng: () => number) => number;
+
 /**
- * fBm with gradient noise:
- * 各オクターブに独立したハッシュ・ランダム回転・ランダムオフセットを使い
- * 格子の整列を完全に崩す。ドメインワーピングは使わない（格子を増幅するため）。
+ * fBm + マスクによる地形生成の共通処理。
+ * マスク関数で陸地の形状を制御する。
  */
-export function continentShape(ctx: StageContext): void {
+function generateWithMask(ctx: StageContext, mask: MaskFn): void {
   const { width: w, height: h, elevation, rng, relief } = ctx;
 
   const baseFreq = 1 / 64;
   const numOctaves = Math.min(14, 8 + Math.floor(Math.log2(Math.max(1, ctx.noiseSize / 64))));
 
   // 各オクターブに独立した勾配ノイズ + 回転 + オフセット
-  const octaves: { noise: (x: number, y: number) => number; cos: number; sin: number; ox: number; oy: number }[] = [];
+  type OctaveData = { noise: (x: number, y: number) => number; cos: number; sin: number; ox: number; oy: number };
+  const octaves: OctaveData[] = [];
   for (let i = 0; i < numOctaves; i++) {
     const angle = rng() * Math.PI * 2;
     octaves.push({
@@ -25,9 +28,8 @@ export function continentShape(ctx: StageContext): void {
   }
 
   // 格子整列を崩すために2つの異なる基本周波数でfBmを合成する
-  // 互いの格子線がずれるため、整列が相殺される
-  const baseFreq2 = 1 / 49; // 素数に近い値で格子をずらす
-  const octaves2: typeof octaves = [];
+  const baseFreq2 = 1 / 49;
+  const octaves2: OctaveData[] = [];
   for (let i = 0; i < numOctaves; i++) {
     const angle = rng() * Math.PI * 2;
     octaves2.push({
@@ -51,7 +53,6 @@ export function continentShape(ctx: StageContext): void {
         if (o === undefined) continue;
         const fx = x * frequency;
         const fy = y * frequency;
-        // オクターブごとに回転 + オフセット（格子整列を崩す）
         const rx = fx * o.cos - fy * o.sin + o.ox;
         const ry = fx * o.sin + fy * o.cos + o.oy;
         value += o.noise(rx, ry) * amplitude;
@@ -61,7 +62,6 @@ export function continentShape(ctx: StageContext): void {
       }
       value /= totalAmp;
 
-      // 2つめのfBm（異なる基本周波数で格子線をずらす）
       let value2 = 0;
       let amp2 = 1;
       let freq2 = baseFreq2;
@@ -80,21 +80,17 @@ export function continentShape(ctx: StageContext): void {
       }
       value2 /= totalAmp2;
 
-      // 2つのfBmをブレンド（格子線が互いに相殺される）
       const blended = value * 0.6 + value2 * 0.4;
 
-      // 端フォールオフ
+      // マスク適用
       const nx = x / w;
       const ny = y / h;
-      const edgeX = Math.min(nx, 1 - nx) * 2;
-      const edgeY = Math.min(ny, 1 - ny) * 2;
-      const edgeDist = Math.min(edgeX, edgeY);
-      const edgeMask = Math.min(1, edgeDist * 8);
+      const m = mask(nx, ny, rng);
 
       const baseLevel = 0.35;
       const heightVal = baseLevel + (blended - 0.5) * 2.0 * relief;
 
-      elevation[y * w + x] = Math.max(0, Math.min(1, heightVal * edgeMask));
+      elevation[y * w + x] = Math.max(0, Math.min(1, heightVal * m));
     }
   }
 
@@ -102,6 +98,86 @@ export function continentShape(ctx: StageContext): void {
   for (let pass = 0; pass < 5; pass++) {
     smoothElevation(elevation, w, h);
   }
+}
+
+/** 大陸型: 中央に大きな1つの大陸 */
+export function continentShape(ctx: StageContext): void {
+  generateWithMask(ctx, (nx, ny) => {
+    const edgeX = Math.min(nx, 1 - nx) * 2;
+    const edgeY = Math.min(ny, 1 - ny) * 2;
+    const edgeDist = Math.min(edgeX, edgeY);
+    return Math.min(1, edgeDist * 8);
+  });
+}
+
+/** 2島型: 左右に2つの島 */
+export function twoIslands(ctx: StageContext): void {
+  generateWithMask(ctx, (nx, ny) => {
+    // 左の島（中心 0.25, 0.5）— 楕円形で分離を確保する
+    const dx1 = (nx - 0.25) * 3.5;
+    const dy1 = (ny - 0.5) * 2.5;
+    const d1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const m1 = Math.max(0, 1 - d1);
+    // 右の島（中心 0.75, 0.5）
+    const dx2 = (nx - 0.75) * 3.5;
+    const dy2 = (ny - 0.5) * 2.5;
+    const d2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    const m2 = Math.max(0, 1 - d2);
+    // 中央の海峡を確保するために中央部を強く沈める
+    const centerGap = Math.exp(-((nx - 0.5) * (nx - 0.5)) / 0.005) * 0.8;
+    return Math.min(1, Math.max(0, (m1 + m2) * 2.5 - centerGap));
+  });
+}
+
+/** 多島型: 複数の小島が散在する群島 */
+export function multiIslands(ctx: StageContext): void {
+  // ノイズでランダムな島の配置を決める
+  const islandNoise = createGradientNoise(ctx.rng);
+  const angle = ctx.rng() * Math.PI * 2;
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const ox = ctx.rng() * 500;
+  const oy = ctx.rng() * 500;
+
+  generateWithMask(ctx, (nx, ny) => {
+    // 端フォールオフ
+    const edgeX = Math.min(nx, 1 - nx) * 2;
+    const edgeY = Math.min(ny, 1 - ny) * 2;
+    const edge = Math.min(1, Math.min(edgeX, edgeY) * 4);
+    // 低周波ノイズで島のパターンを作る
+    const freq = 4;
+    const fx = nx * freq;
+    const fy = ny * freq;
+    const nv = islandNoise(fx * cos - fy * sin + ox, fx * sin + fy * cos + oy);
+    // ノイズ値が高い箇所だけ陸地にする（島が点在する）
+    const landMask = Math.max(0, (nv - 0.35) * 3);
+    return Math.min(1, landMask * edge);
+  });
+}
+
+/** 細長い島型: 横に長い島 */
+export function elongatedIsland(ctx: StageContext): void {
+  // ノイズで海岸線を不規則にする
+  const coastNoise = createGradientNoise(ctx.rng);
+  const cAngle = ctx.rng() * Math.PI * 2;
+  const cCos = Math.cos(cAngle);
+  const cSin = Math.sin(cAngle);
+  const cOx = ctx.rng() * 500;
+  const cOy = ctx.rng() * 500;
+
+  generateWithMask(ctx, (nx, ny) => {
+    // 中央の帯（y方向に狭く、x方向に長い）
+    const centerDist = Math.abs(ny - 0.5) * 2;
+    // 海岸線ノイズで幅を不規則にする
+    const coastVar = coastNoise(nx * 3 * cCos - ny * 3 * cSin + cOx,
+                                 nx * 3 * cSin + ny * 3 * cCos + cOy) * 0.15;
+    const width = 0.35 + coastVar;
+    const bandMask = Math.max(0, 1 - centerDist / width);
+    // x方向の端フォールオフ
+    const edgeX = Math.min(nx, 1 - nx) * 2;
+    const xFade = Math.min(1, edgeX * 6);
+    return Math.min(1, bandMask * bandMask * xFade * 2);
+  });
 }
 
 /**

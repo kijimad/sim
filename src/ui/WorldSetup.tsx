@@ -1,9 +1,10 @@
-import { Button, Card, ConfigProvider, InputNumber, Slider, Space, Typography, theme } from "antd";
+import { Button, Card, ConfigProvider, InputNumber, Select, Slider, Space, Typography, theme } from "antd";
 import { PlayCircleOutlined, ReloadOutlined } from "@ant-design/icons";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GameConfig } from "../game-world.js";
 import { createDefaultConfig } from "../game-world.js";
-import { generateTerrainPreview } from "../terrain.js";
+import { generateTerrainPreview, ALL_PIPELINES } from "../terrain/index.js";
+import type { TerrainPipeline } from "../terrain/index.js";
 
 const { Title, Text } = Typography;
 
@@ -214,6 +215,7 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
   const [waterLevel, setWaterLevel] = useState(0.2);
   const [mountainLevel, setMountainLevel] = useState(0.5);
   const [relief, setRelief] = useState(1.0);
+  const [pipeline, setPipeline] = useState<TerrainPipeline>(ALL_PIPELINES[0]!);
 
   // プレビューデータを生成（2D/3D で共有）
   const previewData = useMemo(() => generateTerrainPreview(PREVIEW_SIZE, {
@@ -222,7 +224,8 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
     mountainThreshold: mountainLevel,
     relief,
     targetSize: mapSize,
-  }), [seed, waterLevel, mountainLevel, relief, mapSize]);
+    pipeline,
+  }), [seed, waterLevel, mountainLevel, relief, mapSize, pipeline]);
 
   const randomSeed = (): void => {
     setSeed(Math.floor(Math.random() * 1000000));
@@ -236,6 +239,7 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
       waterLevel,
       mountainLevel,
       relief,
+      pipeline,
     }));
   };
 
@@ -267,6 +271,19 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
                   />
                   <Button icon={<ReloadOutlined />} onClick={randomSeed}>Random</Button>
                 </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <Text strong>Map Type</Text>
+                <Select
+                  style={{ width: "100%", marginTop: 4 }}
+                  value={pipeline.name}
+                  onChange={(name) => {
+                    const p = ALL_PIPELINES.find(pp => pp.name === name);
+                    if (p !== undefined) setPipeline(p);
+                  }}
+                  options={ALL_PIPELINES.map(p => ({ value: p.name, label: p.name }))}
+                />
               </div>
 
               <div style={{ marginBottom: 16 }}>

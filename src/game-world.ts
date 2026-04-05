@@ -4,7 +4,7 @@ import type { GraphNode } from "./graph.js";
 import { Graph, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
 import { findPath, calcPathCost } from "./pathfinding.js";
 import { ROUTE_MODE_NAMES, RouteMode, Simulation, TrainState } from "./simulation.js";
-import { generateTerrain } from "./terrain.js";
+import { generateTerrain } from "./terrain/index.js";
 import { TileMap } from "./tilemap.js";
 import { TERRAIN_NAMES, Terrain } from "./types.js";
 import { BUILDING_TYPE_NAMES, RESOURCE_NAMES } from "./economy.js";
@@ -41,6 +41,8 @@ export interface GameConfig {
   readonly mountainLevel: number;
   /** 起伏の強さ [0.5=なだらか, 1.0=標準, 2.0=急峻] */
   readonly relief: number;
+  /** 地形パイプライン（省略時はSTANDARD） */
+  readonly pipeline?: import("./terrain/index.js").TerrainPipeline;
 }
 
 export const ToolMode = {
@@ -213,6 +215,7 @@ export class GameWorld {
         waterThreshold: config.waterLevel,
         mountainThreshold: config.mountainLevel,
         relief: config.relief,
+        ...(config.pipeline != null ? { pipeline: config.pipeline } : {}),
       });
       generateCities(this.map, this.economy, config.cityCount, config.seed);
     }

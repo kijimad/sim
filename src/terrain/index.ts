@@ -5,9 +5,9 @@ import { STANDARD } from "./pipeline.js";
 import type { TerrainPipeline } from "./pipeline.js";
 
 export type { TerrainPipeline } from "./pipeline.js";
-export { STANDARD, ARCHIPELAGO, FLAT_RIVERS, ALL_PIPELINES } from "./pipeline.js";
+export { STANDARD, TWO_ISLANDS, ARCHIPELAGO, ELONGATED, FLAT_RIVERS, ALL_PIPELINES } from "./pipeline.js";
 export type { StageContext, TerrainStage } from "./context.js";
-export { createContext, createRng } from "./context.js";
+export { createContext, createRng, Biome } from "./context.js";
 
 export interface TerrainGenConfig {
   readonly seed: number;

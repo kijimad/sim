@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { TileMap } from "./tilemap.js";
-import { generateTerrain, generateTerrainPreview } from "./terrain.js";
+import { generateTerrain, generateTerrainPreview } from "./terrain/index.js";
 import { Terrain } from "./types.js";
 
 describe("generateTerrain", () => {

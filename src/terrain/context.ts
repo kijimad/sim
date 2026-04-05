@@ -1,3 +1,16 @@
+/** バイオームID */
+export const Biome = {
+  Plains: 0,
+  Highland: 1,
+  Bay: 2,
+  Desert: 3,
+  Tombolo: 4,
+  Ocean: 5,
+  Island: 6,
+  Lake: 7,
+} as const;
+export type Biome = (typeof Biome)[keyof typeof Biome];
+
 /** 地形生成パイプラインのコンテキスト */
 export interface StageContext {
   readonly width: number;
@@ -8,6 +21,8 @@ export interface StageContext {
   readonly flow: Float32Array;
   /** 湿度マップ（バイオームで利用） */
   readonly moisture: Float32Array;
+  /** バイオームIDマップ（各セルのバイオーム種別） */
+  readonly biomeId: Uint8Array;
   /** 決定論的乱数生成器 */
   readonly rng: () => number;
   /** 起伏の強さ [0.5=なだらか, 1.0=標準, 2.0=急峻] */
@@ -39,6 +54,7 @@ export function createContext(width: number, height: number, seed: number, relie
     elevation: new Float32Array(size),
     flow: new Float32Array(size),
     moisture: new Float32Array(size),
+    biomeId: new Uint8Array(size),
     rng: createRng(seed),
     relief,
     noiseSize: noiseSize ?? width,
