@@ -135,6 +135,127 @@ function deposit(
 
 
 /**
+ * 小河川による谷の刻み:
+ * flow 20〜500 の小さな水流に沿って、丘陵に浅い谷を掘る。
+ * 流量に応じて谷の深さと幅がスケールする。
+ */
+function carveSmallStreams(w: number, h: number, elevation: Float32Array, flow: Float32Array): void {
+  const size = w * h;
+  const STREAM_MIN = 100;
+  // 8方向BFS（斜め含む）で直線的なパスを崩す
+  const DX8 = [0, 1, 1, 1, 0, -1, -1, -1];
+  const DY8 = [-1, -1, 0, 1, 1, 1, 0, -1];
+  const DIST8 = [1, 1.414, 1, 1.414, 1, 1.414, 1, 1.414];
+
+  const streamDist = new Float32Array(size).fill(Infinity);
+  const streamElev = new Float32Array(size);
+  const queue: number[] = [];
+
+  for (let i = 0; i < size; i++) {
+    const f = flow[i] ?? 0;
+    if (f >= STREAM_MIN) {
+      streamDist[i] = 0;
+      streamElev[i] = elevation[i] ?? 0;
+      queue.push(i);
+    }
+  }
+
+  const MAX_RADIUS = Math.max(10, Math.floor(Math.min(w, h) * 0.04));
+  let head = 0;
+  while (head < queue.length) {
+    const ci = queue[head++] ?? 0;
+    const cd = streamDist[ci] ?? 0;
+    if (cd >= MAX_RADIUS) continue;
+    const cx = ci % w; const cy = (ci - cx) / w;
+    for (let d = 0; d < 8; d++) {
+      const nx = cx + (DX8[d] ?? 0); const ny = cy + (DY8[d] ?? 0);
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+      const ni = ny * w + nx;
+      const nd = cd + (DIST8[d] ?? 1);
+      if (nd < (streamDist[ni] ?? Infinity)) {
+        streamDist[ni] = nd;
+        streamElev[ni] = streamElev[ci] ?? 0;
+        queue.push(ni);
+      }
+    }
+  }
+
+  // 川に向かってなだらかな谷を掘る
+  for (let i = 0; i < size; i++) {
+    const dist = streamDist[i] ?? Infinity;
+    if (dist === Infinity || dist === 0) continue;
+    const here = elevation[i] ?? 0;
+    const sElev = streamElev[i] ?? 0;
+    if (here <= sElev) continue;
+
+    const t = dist / MAX_RADIUS;
+    const profile = t * Math.sqrt(t);
+    const pull = (here - sElev) * (1 - profile) * 0.7;
+    elevation[i] = here - pull;
+  }
+
+  // 掘った谷の直線を崩すためにブラーをかける
+  smoothCarvedValleys(elevation, w, h);
+  smoothCarvedValleys(elevation, w, h);
+
+  // 丘の頂上に微細な起伏を追加する
+  const hilltopNoise = createGradientNoise(() => {
+    let s = 12345;
+    s ^= s << 13; s ^= s >> 17; s ^= s << 5;
+    return (s >>> 0) / 0x100000000;
+  });
+
+  for (let i = 0; i < size; i++) {
+    const dist = streamDist[i] ?? Infinity;
+    if (dist === Infinity) continue;
+    const hilltopFactor = Math.min(1, dist / (MAX_RADIUS * 0.5));
+    if (hilltopFactor < 0.3) continue;
+
+    const x = i % w;
+    const y = (i - x) / w;
+    const nx = x / w;
+    const ny = y / h;
+
+    const nv1 = hilltopNoise(nx * 12, ny * 12);
+    const nv2 = hilltopNoise(nx * 20 + 50, ny * 20 + 50);
+    const bump = ((nv1 - 0.5) * 0.04 + (nv2 - 0.5) * 0.02) * hilltopFactor;
+
+    elevation[i] = Math.max(0, Math.min(1, (elevation[i] ?? 0) + bump));
+  }
+}
+
+/** 谷掘りの後のブラー（5-tap） */
+function smoothCarvedValleys(elevation: Float32Array, w: number, h: number): void {
+  const temp = new Float32Array(w * h);
+  const K = [1, 4, 6, 4, 1];
+  const KSUM = 16;
+
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let k = -2; k <= 2; k++) {
+        const sx = Math.max(0, Math.min(w - 1, x + k));
+        sum += (elevation[row + sx] ?? 0) * (K[k + 2] ?? 0);
+      }
+      temp[row + x] = sum / KSUM;
+    }
+  }
+
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    for (let x = 0; x < w; x++) {
+      let sum = 0;
+      for (let k = -2; k <= 2; k++) {
+        const sy = Math.max(0, Math.min(h - 1, y + k));
+        sum += (temp[sy * w + x] ?? 0) * (K[k + 2] ?? 0);
+      }
+      elevation[row + x] = sum / KSUM;
+    }
+  }
+}
+
+/**
  * 河川沿いの谷形成:
  * - 山岳部: V字谷を掘る（川から離れるほど標高が急上昇する）
  * - 平地部: なだらかな氾濫原（川に向かって緩やかに標高が下がる）
@@ -143,8 +264,8 @@ export function flattenValleys(ctx: StageContext): void {
   const { width: w, height: h, elevation, flow } = ctx;
   const size = w * h;
   const MOUNTAIN_TH = 0.35;
-  // 大河川のみ谷の形成対象にする（小さい川では平坦化しない）
   const FLOW_MIN = 500;
+
 
   // 各セルから最寄りの大河川までの距離・標高・流量を計算する（BFS）
   const riverDist = new Float32Array(size).fill(Infinity);
@@ -265,4 +386,7 @@ export function flattenValleys(ctx: StageContext): void {
       }
     }
   }
+
+  // 小河川による谷の刻み（丘陵に細い谷を掘る）
+  carveSmallStreams(w, h, elevation, flow);
 }

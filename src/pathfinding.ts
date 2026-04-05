@@ -14,36 +14,79 @@ export const TERRAIN_COST: Record<Terrain, number> = {
 };
 
 /** 1タイルの標高差あたりの追加建設コスト。大きいほど等高線に沿ったルートが選ばれる */
-const SLOPE_COST_FACTOR = 500;
+const SLOPE_COST_FACTOR = 5000;
+
+/** 隣接タイル間の最大許容標高差。これを超えるとレール敷設不可 */
+const MAX_SLOPE = 0.015;
+
+/** コスト内訳 */
+export interface PathCostBreakdown {
+  readonly total: number;
+  readonly terrain: number;
+  readonly slope: number;
+  readonly length: number;
+  readonly maxElevDiff: number;
+  readonly totalElevGain: number;
+  readonly impossible: boolean;
+}
 
 /** パスの建設コストを計算する（地形コスト + 高低差コスト） */
 export function calcPathCost(map: TileMap, path: readonly PathNode[]): number {
-  let cost = 0;
+  return calcPathCostDetail(map, path).total;
+}
+
+/** パスの建設コスト内訳を計算する */
+export function calcPathCostDetail(map: TileMap, path: readonly PathNode[]): PathCostBreakdown {
+  let terrainCost = 0;
+  let slopeCost = 0;
+  let maxElevDiff = 0;
+  let totalElevGain = 0;
+  let impossible = false;
+
   for (let i = 0; i < path.length; i++) {
     const p = path[i];
     if (p === undefined || !map.inBounds(p.x, p.y)) continue;
     const tile = map.get(p.x, p.y);
     const tc = TERRAIN_COST[tile.terrain];
-    cost += tc === Infinity ? 0 : tc;
-    // 隣接タイルとの高低差コスト
+    terrainCost += tc === Infinity ? 0 : tc;
+
     if (i > 0) {
       const prev = path[i - 1];
       if (prev !== undefined && map.inBounds(prev.x, prev.y)) {
         const prevTile = map.get(prev.x, prev.y);
-        cost += Math.abs(tile.elevation - prevTile.elevation) * SLOPE_COST_FACTOR;
+        const elevDiff = Math.abs(tile.elevation - prevTile.elevation);
+        if (elevDiff > MAX_SLOPE) impossible = true;
+        if (elevDiff > maxElevDiff) maxElevDiff = elevDiff;
+        if (tile.elevation > prevTile.elevation) totalElevGain += tile.elevation - prevTile.elevation;
+        slopeCost += elevDiff * SLOPE_COST_FACTOR;
       }
     }
   }
-  return Math.round(cost);
+
+  return {
+    total: impossible ? Infinity : Math.round(terrainCost + slopeCost),
+    terrain: Math.round(terrainCost),
+    slope: Math.round(slopeCost),
+    length: path.length,
+    maxElevDiff: Math.round(maxElevDiff * 1000) / 1000,
+    totalElevGain: Math.round(totalElevGain * 1000) / 1000,
+    impossible,
+  };
 }
 
 function heuristic(ax: number, ay: number, bx: number, by: number): number {
-  // admissible なヒューリスティック: 最小コスト（平地1/タイル）× マンハッタン距離
-  return Math.abs(ax - bx) + Math.abs(ay - by);
+  // admissible なヒューリスティック: 最小地形コスト（平地1）× マンハッタン距離
+  // 勾配コストは0以上なので加算しなくても admissible
+  return (Math.abs(ax - bx) + Math.abs(ay - by)) * 1;
 }
 
-const DX = [0, 1, 0, -1];
-const DY = [-1, 0, 1, 0];
+/** 探索上限ノード数（大きいマップでも最適解に近い解を返すため） */
+const MAX_SEARCH_NODES = 500000;
+
+// 8方向移動（斜め含む）で等高線に沿ったルートを見つけやすくする
+const DX = [0, 1, 0, -1, 1, 1, -1, -1];
+const DY = [-1, 0, 1, 0, -1, 1, 1, -1];
+const MOVE_DIST = [1, 1, 1, 1, 1.414, 1.414, 1.414, 1.414];
 
 // --- バイナリヒープ（最小ヒープ） ---
 
@@ -156,6 +199,7 @@ export function findPath(
   const heap = new MinHeap();
   heap.push(startKey, heuristic(startX, startY, endX, endY));
 
+  let nodesExpanded = 0;
   while (heap.length > 0) {
     const currentKey = heap.pop();
 
@@ -165,13 +209,17 @@ export function findPath(
 
     if (closed[currentKey] === 1) continue;
     closed[currentKey] = 1;
+    nodesExpanded++;
+    if (nodesExpanded > MAX_SEARCH_NODES) return null;
 
     const cx = currentKey % w;
     const cy = (currentKey - cx) / w;
     const currentG = gScore[currentKey] ?? Infinity;
     const currentDir = dirMap[currentKey] ?? -1;
 
-    for (let d = 0; d < 4; d++) {
+    const currentTile = map.get(cx, cy);
+
+    for (let d = 0; d < 8; d++) {
       const nx = cx + (DX[d] ?? 0);
       const ny = cy + (DY[d] ?? 0);
 
@@ -187,16 +235,19 @@ export function findPath(
       const moveCost = TERRAIN_COST[tile.terrain];
       if (moveCost === Infinity) continue;
 
-      // 高低差コスト: 標高差が大きいほど建設費が高い
-      const currentTile = map.get(cx, cy);
+      // 斜め移動の距離補正
+      const dist = MOVE_DIST[d] ?? 1;
+
+      // 高低差コスト: 閾値を超えると敷設不可（斜めは距離で補正）
       const elevDiff = Math.abs(tile.elevation - currentTile.elevation);
+      if (elevDiff > MAX_SLOPE * dist) continue;
       const slopeCost = elevDiff * SLOPE_COST_FACTOR;
 
       // ジグザグ誘導
-      const stepDir = (DX[d] ?? 0) !== 0 ? 0 : 1;
+      const stepDir = d < 4 ? d : -1;
       const straightPenalty = (currentDir >= 0 && currentDir === stepDir) ? 0.01 : 0;
 
-      const tentativeG = currentG + moveCost + slopeCost + straightPenalty;
+      const tentativeG = currentG + moveCost * dist + slopeCost + straightPenalty;
       if (tentativeG < (gScore[neighborKey] ?? Infinity)) {
         gScore[neighborKey] = tentativeG;
         cameFrom[neighborKey] = currentKey;

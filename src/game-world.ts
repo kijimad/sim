@@ -2,9 +2,10 @@ import { BuildingType, Economy, Resource, generateCities } from "./economy.js";
 
 import type { GraphNode } from "./graph.js";
 import { Graph, NodeKind, hasNonPerpendicularOverlap } from "./graph.js";
-import { findPath, calcPathCost } from "./pathfinding.js";
+import { findPath, calcPathCostDetail } from "./pathfinding.js";
+import type { PathCostBreakdown } from "./pathfinding.js";
 import { ROUTE_MODE_NAMES, RouteMode, Simulation, TrainState } from "./simulation.js";
-import { generateTerrain, BIOME_NAMES } from "./terrain/index.js";
+import { generateTerrain, BiomeRegistry, registerStandardBiomes } from "./terrain/index.js";
 import { TileMap } from "./tilemap.js";
 import { TERRAIN_NAMES, Terrain } from "./types.js";
 import { BUILDING_TYPE_NAMES, RESOURCE_NAMES } from "./economy.js";
@@ -41,8 +42,8 @@ export interface GameConfig {
   readonly mountainLevel: number;
   /** 起伏の強さ [0.5=なだらか, 1.0=標準, 2.0=急峻] */
   readonly relief: number;
-  /** 地形パイプライン（省略時はSTANDARD） */
-  readonly pipeline?: import("./terrain/index.js").TerrainPipeline;
+  /** 地形パイプライン（省略時はRANDOM） */
+  readonly pipeline?: import("./terrain/index.js").Pipeline;
 }
 
 export const ToolMode = {
@@ -169,6 +170,7 @@ export interface GameSnapshot {
   readonly openInspectTiles: readonly { x: number; y: number }[];
   readonly previewPathCost: number;
   readonly previewPathLength: number;
+  readonly previewPathBreakdown: PathCostBreakdown | null;
   readonly inspect: InspectInfo;
   readonly toasts: readonly Toast[];
   readonly consistPresets: readonly ConsistPresetInfo[];
@@ -184,6 +186,7 @@ export class GameWorld {
   readonly sim: Simulation;
   readonly economy: Economy;
   readonly map: TileMap;
+  readonly biomeRegistry: BiomeRegistry;
 
   viewMode: ViewMode = ViewMode.Normal;
   toolMode: ToolMode = ToolMode.Inspect;
@@ -198,6 +201,7 @@ export class GameWorld {
   openRouteIds: number[] = [];
   lastPreviewPathCost = 0;
   lastPreviewPathLength = 0;
+  lastPreviewPathBreakdown: PathCostBreakdown | null = null;
   openInspectTiles: { x: number; y: number }[] = [];
 
   toasts: Toast[] = [];
@@ -218,11 +222,13 @@ export class GameWorld {
 
     if (config.debug) {
       this.map = new TileMap(64, 64);
+      this.biomeRegistry = new BiomeRegistry();
+      registerStandardBiomes(this.biomeRegistry);
       this.setupDebugWorld();
     } else {
       const size = config.mapSize;
       this.map = new TileMap(size, size);
-      generateTerrain(this.map, {
+      this.biomeRegistry = generateTerrain(this.map, {
         seed: config.seed,
         waterThreshold: config.waterLevel,
         mountainThreshold: config.mountainLevel,
@@ -437,6 +443,7 @@ export class GameWorld {
       openInspectTiles: [...this.openInspectTiles],
       previewPathCost: this.lastPreviewPathCost,
       previewPathLength: this.lastPreviewPathLength,
+      previewPathBreakdown: this.lastPreviewPathBreakdown,
       inspect: this.buildInspectInfo(),
       toasts: [...this.toasts],
       consistPresets: [...this.consistPresets.values()].map((p) => ({
@@ -475,7 +482,7 @@ export class GameWorld {
       tileX: tx,
       tileY: ty,
       terrain: TERRAIN_NAMES[tile.terrain],
-      biome: BIOME_NAMES[tile.biomeId] ?? "Unknown",
+      biome: this.biomeRegistry.getById(tile.biomeId)?.displayName ?? "Unknown",
     };
 
     // ノードを確認する（建物より優先）
@@ -1217,7 +1224,9 @@ export class GameWorld {
       }
     }
     this.lastPreviewPathLength = fullPath.length;
-    this.lastPreviewPathCost = calcPathCost(this.map, fullPath);
+    const breakdown = calcPathCostDetail(this.map, fullPath);
+    this.lastPreviewPathCost = breakdown.total;
+    this.lastPreviewPathBreakdown = breakdown;
     return fullPath;
   }
 

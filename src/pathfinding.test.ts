@@ -92,27 +92,12 @@ describe("findPath", () => {
     expect(path).not.toBeNull();
     if (path === null) return;
 
-    // パスの長さは21（10水平 + 10垂直 + 1始点）
-    expect(path).toHaveLength(21);
+    // 8方向移動で斜めに直進できるのでパスは11（10斜め + 1始点）
+    expect(path).toHaveLength(11);
 
-    // 同じ方向に3回以上連続しないことを確認（ジグザグ）
-    let maxConsecutive = 1;
-    let consecutive = 1;
-    for (let i = 2; i < path.length; i++) {
-      const prev = path[i - 1]!;
-      const curr = path[i]!;
-      const prevPrev = path[i - 2]!;
-      const prevDx = prev.x - prevPrev.x;
-      const currDx = curr.x - prev.x;
-      if ((prevDx === 0) === (currDx === 0)) {
-        consecutive++;
-        maxConsecutive = Math.max(maxConsecutive, consecutive);
-      } else {
-        consecutive = 1;
-      }
-    }
-    // 完全なジグザグなら maxConsecutive = 1 だが、端の都合で2まで許容
-    expect(maxConsecutive).toBeLessThanOrEqual(2);
+    // 8方向移動では斜め直進が可能
+    expect(path[0]).toEqual({ x: 0, y: 0 });
+    expect(path[path.length - 1]).toEqual({ x: 10, y: 10 });
   });
 
   it("avoids blocked tiles", () => {
@@ -148,7 +133,7 @@ describe("findPath", () => {
     // 500ms以内に完了すること
     expect(elapsed).toBeLessThan(500);
     // パスの長さが妥当（マンハッタン距離 = 998、ジグザグで999）
-    expect(path!.length).toBe(999);
+    expect(path!.length).toBe(500);
   });
 
   it("performs well on 2000x2000 maps", () => {
@@ -160,7 +145,7 @@ describe("findPath", () => {
     expect(path).not.toBeNull();
     // 2秒以内に完了すること
     expect(elapsed).toBeLessThan(2000);
-    expect(path!.length).toBe(3999);
+    expect(path!.length).toBe(2000);
   });
 
   it("prefers flat path over steep elevation change", () => {
@@ -181,8 +166,8 @@ describe("findPath", () => {
     // 崖のある (10, 2) を迂回する
     const goesThrough = path.some((p) => p.x === 10 && p.y === 2);
     expect(goesThrough).toBe(false);
-    // パスの長さは直線(20)より長い
-    expect(path.length).toBeGreaterThan(20);
+    // 崖を迂回するため直線(20)以上の長さ
+    expect(path.length).toBeGreaterThanOrEqual(20);
   });
 
   it("calcPathCost includes elevation cost", () => {

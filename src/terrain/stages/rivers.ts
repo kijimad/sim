@@ -60,7 +60,7 @@ export function computeRivers(ctx: StageContext): void {
  * 端のセルから始めて、まだ処理していないセルを高さ順に処理する。
  * 窪地のセルは流出先の高さ + ε まで引き上げられる。
  */
-function fillDepressions(w: number, h: number, elevation: Float32Array): void {
+export function fillDepressions(w: number, h: number, elevation: Float32Array): void {
   const size = w * h;
   const epsilon = 0.0001;
   const visited = new Uint8Array(size);

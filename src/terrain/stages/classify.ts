@@ -1,5 +1,5 @@
 import type { StageContext } from "../context.js";
-import { Biome } from "../context.js";
+import { BIOME_TAGS } from "../biome-registry.js";
 import { Terrain } from "../../types.js";
 
 export interface ClassifyConfig {
@@ -19,23 +19,28 @@ export function createClassifyBiome(config?: Partial<ClassifyConfig>): (ctx: Sta
   const cfg = { ...DEFAULT_CLASSIFY, ...config };
 
   return (ctx: StageContext): Terrain[] => {
-    const { width: w, height: h, elevation, flow, biomeId } = ctx;
+    const { width: w, height: h, elevation, flow, biomeId, biomeRegistry } = ctx;
     const size = w * h;
+
+    const OCEAN = biomeRegistry.idOf(BIOME_TAGS.Ocean);
+    const BAY = biomeRegistry.idOf(BIOME_TAGS.Bay);
+    const LAKE = biomeRegistry.idOf(BIOME_TAGS.Lake);
+    const BEACH = biomeRegistry.idOf(BIOME_TAGS.Beach);
 
     // バイオームIDを尊重した分類
     const result: Terrain[] = new Array<Terrain>(size);
     for (let i = 0; i < size; i++) {
-      const biome = biomeId[i] as Biome;
+      const biome = biomeId[i] ?? 0;
       const elev = elevation[i] ?? 0;
 
       // 水域バイオームは常に Water にする（標高に関わらず）
-      if (biome === Biome.Ocean || biome === Biome.Bay || biome === Biome.Lake) {
+      if (biome === OCEAN || biome === BAY || biome === LAKE) {
         result[i] = Terrain.Water;
         continue;
       }
 
-      // Desert / Tombolo バイオームは標高に応じて Sand / Mountain を使い分ける
-      if (biome === Biome.Beach) {
+      // Beach バイオームは標高に応じて Sand / Mountain を使い分ける
+      if (biome === BEACH) {
         if (elev < cfg.waterThreshold) {
           result[i] = Terrain.Water;
         } else if (elev > cfg.mountainThreshold) {

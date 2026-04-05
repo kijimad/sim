@@ -149,10 +149,18 @@ export class Renderer {
     const cw = canvas.width;
     const ch = canvas.height;
 
+
     // 単位行列変換でクリアする
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
 
+    // スクリーン座標で直接描画する（サブピクセル隙間を防ぐ）
+    const zoom = camera.zoom;
+    const offsetX = -camera.x * zoom + cw / 2;
+    const offsetY = -camera.y * zoom + ch / 2;
+    const tileScreenSize = TILE_SIZE * zoom;
+
+    // 3D モードの高さスケール（スクリーン空間）
     // 表示可能なタイル範囲を計算する
     const topLeft = camera.screenToWorld(0, 0, cw, ch);
     const bottomRight = camera.screenToWorld(cw, ch, cw, ch);
@@ -160,13 +168,8 @@ export class Renderer {
     const minTx = Math.max(0, Math.floor(topLeft.wx / TILE_SIZE));
     const minTy = Math.max(0, Math.floor(topLeft.wy / TILE_SIZE));
     const maxTx = Math.min(map.width - 1, Math.floor(bottomRight.wx / TILE_SIZE));
-    const maxTy = Math.min(map.height - 1, Math.floor(bottomRight.wy / TILE_SIZE));
-
-    // スクリーン座標で直接描画する（サブピクセル隙間を防ぐ）
-    const zoom = camera.zoom;
-    const offsetX = -camera.x * zoom + cw / 2;
-    const offsetY = -camera.y * zoom + ch / 2;
-    const tileScreenSize = TILE_SIZE * zoom;
+    const extraTilesY = 0;
+    const maxTy = Math.min(map.height - 1, Math.floor(bottomRight.wy / TILE_SIZE) + extraTilesY);
 
     // 間引き率
     const step = tileScreenSize < 2 ? Math.ceil(4 / tileScreenSize) : 1;
@@ -181,7 +184,7 @@ export class Renderer {
         const sy = Math.min(ty, map.height - 1);
         const tile = map.get(sx, sy);
 
-        // ヒルシェード計算（通常モードと陰影起伏図で使用する）
+        // ヒルシェード計算
         const hR = sx + step < map.width ? map.get(sx + step, sy).elevation : tile.elevation;
         const hD = sy + step < map.height ? map.get(sx, sy + step).elevation : tile.elevation;
         const hdx = (tile.elevation - hR) * 6;
@@ -189,18 +192,16 @@ export class Renderer {
         const shade = 1.0 + (hdx * -0.707 + hdy * -0.707) * 0.5;
 
         if (viewMode === "biome") {
-          // バイオーム表示: バイオームIDに応じた色
           const bc = BIOME_COLORS[tile.biomeId] ?? [128, 128, 128];
           const s = Math.max(0.5, Math.min(1.3, shade));
           ctx.fillStyle = rgb(bc[0] * s, bc[1] * s, bc[2] * s);
         } else if (viewMode === "hillshade") {
-          // 陰影起伏図: グレースケール
           const v = Math.max(0, Math.min(255, Math.round(shade * 128)));
           ctx.fillStyle = rgb(v, v, v);
         } else {
           ctx.fillStyle = terrainColor(tile.terrain, tile.elevation, shade);
         }
-        // ピクセルスナップしてサブピクセル隙間を完全に除去する
+
         const screenX = Math.floor(tx * tileScreenSize + offsetX);
         const screenY = Math.floor(ty * tileScreenSize + offsetY);
         const screenW = Math.ceil(blockScreenSize) + 1;

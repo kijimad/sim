@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { createContext, Biome } from "../context.js";
+import { createContext } from "../context.js";
+import { BIOME_TAGS } from "../biome-registry.js";
 import { continentShape } from "./continent.js";
 import { erode } from "./erosion.js";
 import { computeRivers } from "./rivers.js";
@@ -21,7 +22,7 @@ describe("海洋バイオーム", () => {
     const ctx = runPipeline(256, 42);
     let oceanCount = 0;
     for (let i = 0; i < 256 * 256; i++) {
-      if (ctx.biomeId[i] === Biome.Ocean) oceanCount++;
+      if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Ocean)) oceanCount++;
     }
     expect(oceanCount).toBeGreaterThan(0);
   });
@@ -34,7 +35,7 @@ describe("湖バイオーム", () => {
     for (const seed of seeds) {
       const ctx = runPipeline(256, seed);
       for (let i = 0; i < 256 * 256; i++) {
-        if (ctx.biomeId[i] === Biome.Lake) { found++; break; }
+        if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Lake)) { found++; break; }
       }
     }
     expect(found).toBeGreaterThanOrEqual(1);
@@ -48,7 +49,7 @@ describe("湖バイオーム", () => {
       const ctx = runPipeline(256, seed);
       let lakeCount = 0;
       for (let i = 0; i < 256 * 256; i++) {
-        if (ctx.biomeId[i] === Biome.Lake) lakeCount++;
+        if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Lake)) lakeCount++;
       }
       if (lakeCount === 0) continue;
       // Lake バイオームが classify で Water に分類されることは classify.ts で保証済み
@@ -69,11 +70,11 @@ describe("湖バイオーム", () => {
       for (let y = 1; y < size - 1; y++) {
         for (let x = 1; x < size - 1; x++) {
           const i = y * size + x;
-          if (ctx.biomeId[i] !== Biome.Lake) continue;
+          if (ctx.biomeId[i] !== ctx.biomeRegistry.idOf(BIOME_TAGS.Lake)) continue;
           let isShore = false;
           for (let d = 0; d < 4; d++) {
             const ni = (y + (DY4[d] ?? 0)) * size + x + (DX4[d] ?? 0);
-            if (ctx.biomeId[ni] !== Biome.Lake) { isShore = true; break; }
+            if (ctx.biomeId[ni] !== ctx.biomeRegistry.idOf(BIOME_TAGS.Lake)) { isShore = true; break; }
           }
           if (isShore) { shoreSum += ctx.elevation[i] ?? 0; shoreCount++; }
           else { innerSum += ctx.elevation[i] ?? 0; innerCount++; }
@@ -95,7 +96,7 @@ describe("島バイオーム", () => {
     for (const seed of seeds) {
       const ctx = runPipeline(256, seed);
       for (let i = 0; i < 256 * 256; i++) {
-        if (ctx.biomeId[i] === Biome.Island) { found++; break; }
+        if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Island)) { found++; break; }
       }
     }
     expect(found).toBeGreaterThanOrEqual(1);
@@ -109,7 +110,7 @@ describe("渓谷バイオーム", () => {
     for (const seed of seeds) {
       const ctx = runPipeline(256, seed);
       for (let i = 0; i < 256 * 256; i++) {
-        if (ctx.biomeId[i] === Biome.Canyon) { found++; break; }
+        if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Canyon)) { found++; break; }
       }
     }
     expect(found).toBeGreaterThanOrEqual(1);
@@ -122,8 +123,8 @@ describe("渓谷バイオーム", () => {
       let canyonSum = 0; let canyonCount = 0;
       let highlandSum = 0; let highlandCount = 0;
       for (let i = 0; i < 256 * 256; i++) {
-        if (ctx.biomeId[i] === Biome.Canyon) { canyonSum += ctx.elevation[i] ?? 0; canyonCount++; }
-        else if (ctx.biomeId[i] === Biome.Highland) { highlandSum += ctx.elevation[i] ?? 0; highlandCount++; }
+        if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Canyon)) { canyonSum += ctx.elevation[i] ?? 0; canyonCount++; }
+        else if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Highland)) { highlandSum += ctx.elevation[i] ?? 0; highlandCount++; }
       }
       if (canyonCount > 0 && highlandCount > 0) {
         expect(canyonSum / canyonCount).toBeLessThan(highlandSum / highlandCount);
@@ -143,7 +144,7 @@ describe("湾バイオーム", () => {
     for (const seed of seeds) {
       const ctx = runPipeline(256, seed);
       for (let i = 0; i < 256 * 256; i++) {
-        if (ctx.biomeId[i] === Biome.Bay) { found++; break; }
+        if (ctx.biomeId[i] === ctx.biomeRegistry.idOf(BIOME_TAGS.Bay)) { found++; break; }
       }
     }
     // Bay は現在 assignBiomes で直接設定されないので 0 でも許容する

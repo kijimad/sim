@@ -47,12 +47,12 @@ describe("generateTerrain", () => {
   });
 
   it("produces all terrain types with default config", () => {
-    const map = new TileMap(256, 256);
+    const map = new TileMap(512, 512);
     generateTerrain(map, { seed: 42 });
 
     const found = new Set<Terrain>();
-    for (let y = 0; y < 256; y++) {
-      for (let x = 0; x < 256; x++) {
+    for (let y = 0; y < 512; y++) {
+      for (let x = 0; x < 512; x++) {
         found.add(map.get(x, y).terrain);
       }
     }
@@ -117,7 +117,7 @@ describe("generateTerrainPreview", () => {
   });
 
   it("全地形タイプを含む", () => {
-    const { terrain } = generateTerrainPreview(256, {
+    const { terrain } = generateTerrainPreview(512, {
       seed: 42,
       waterThreshold: 0.2,
       mountainThreshold: 0.5, relief: 1.0,

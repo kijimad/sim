@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GameConfig } from "../game-world.js";
 import { createDefaultConfig } from "../game-world.js";
 import { generateTerrainPreview, ALL_PIPELINES } from "../terrain/index.js";
-import type { TerrainPipeline } from "../terrain/index.js";
+import type { Pipeline } from "../terrain/index.js";
 
 const { Title, Text } = Typography;
 
@@ -219,7 +219,7 @@ export function WorldSetup({ onStart }: WorldSetupProps) {
   const [waterLevel, setWaterLevel] = useState(0.2);
   const [mountainLevel, setMountainLevel] = useState(0.5);
   const [relief, setRelief] = useState(1.0);
-  const [pipeline, setPipeline] = useState<TerrainPipeline>(ALL_PIPELINES[0]!);
+  const [pipeline, setPipeline] = useState<Pipeline>(ALL_PIPELINES[0]!);
 
   // プレビューデータを生成（2D/3D で共有）
   const previewData = useMemo(() => generateTerrainPreview(PREVIEW_SIZE, {

@@ -35,7 +35,7 @@ export class Game {
   readonly world: GameWorld;
   private readonly renderer: Renderer;
   private readonly canvas: HTMLCanvasElement;
-  private readonly camera: Camera;
+  readonly camera: Camera;
 
   private hoverTileX: number | null = null;
   private hoverTileY: number | null = null;

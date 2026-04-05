@@ -1,13 +1,16 @@
 import type { TileMap } from "../tilemap.js";
 import { createContext } from "./context.js";
+import type { BiomeRegistry } from "./biome-registry.js";
 import { createClassifyBiome } from "./stages/classify.js";
+import { runPipeline } from "./slots.js";
 import { RANDOM } from "./pipeline.js";
-import type { TerrainPipeline } from "./pipeline.js";
+import type { Pipeline } from "./slots.js";
 
-export type { TerrainPipeline } from "./pipeline.js";
-export { RANDOM, CONTINENT, TWO_ISLANDS, ARCHIPELAGO, FLAT_RIVERS, ALL_PIPELINES } from "./pipeline.js";
-export type { StageContext, TerrainStage } from "./context.js";
-export { createContext, createRng, Biome, BIOME_NAMES } from "./context.js";
+export type { Pipeline, Strategy, SlotName } from "./slots.js";
+export { runPipeline, noopStrategy, SLOT_ORDER, MULTI_SLOTS } from "./slots.js";
+export { RANDOM, TEMPERATE_CONTINENT, TWO_ISLANDS, ARCHIPELAGO, FLAT_RIVERS, VOLCANIC_ARCHIPELAGO, ALL_PIPELINES } from "./pipeline.js";
+export type { StageContext, TerrainStage, BiomeId, BiomeDef } from "./context.js";
+export { createContext, createRng, BiomeRegistry, BIOME_TAGS, registerStandardBiomes } from "./context.js";
 
 export interface TerrainGenConfig {
   readonly seed: number;
@@ -17,7 +20,7 @@ export interface TerrainGenConfig {
   readonly relief: number;
   /** 実マップサイズ（プレビュー用: ノイズスケールの基準） */
   readonly targetSize?: number;
-  readonly pipeline?: TerrainPipeline;
+  readonly pipeline?: Pipeline;
 }
 
 const DEFAULT_CONFIG: TerrainGenConfig = {
@@ -27,19 +30,17 @@ const DEFAULT_CONFIG: TerrainGenConfig = {
   relief: 1.0,
 };
 
-/** TileMap に地形を生成する */
+/** TileMap に地形を生成し、使用された BiomeRegistry を返す */
 export function generateTerrain(
   map: TileMap,
   config: Partial<TerrainGenConfig> = {},
-): void {
+): BiomeRegistry {
   const cfg = { ...DEFAULT_CONFIG, ...config };
   const ctx = createContext(map.width, map.height, cfg.seed, cfg.relief);
   const pipeline = cfg.pipeline ?? RANDOM;
 
   // パイプライン実行
-  for (const stage of pipeline.stages) {
-    stage(ctx);
-  }
+  runPipeline(pipeline, ctx);
 
   // バイオーム分類
   const classify = createClassifyBiome({
@@ -58,6 +59,8 @@ export function generateTerrain(
       }
     }
   }
+
+  return ctx.biomeRegistry;
 }
 
 export interface TerrainPreviewData {
@@ -76,9 +79,7 @@ export function generateTerrainPreview(
   const ctx = createContext(previewSize, previewSize, config.seed, config.relief, noiseSize);
   const pipeline = config.pipeline ?? RANDOM;
 
-  for (const stage of pipeline.stages) {
-    stage(ctx);
-  }
+  runPipeline(pipeline, ctx);
 
   const classify = createClassifyBiome({
     waterThreshold: config.waterThreshold,
