@@ -65,6 +65,9 @@ export interface Strategy {
  */
 export interface Pipeline {
   readonly name: string;
+  /** パイプライン固有の classify 閾値オーバーライド（DEM 用） */
+  readonly waterThreshold?: number;
+  readonly mountainThreshold?: number;
   readonly slots: {
     readonly landmass: Strategy;
     readonly tectonics: Strategy;

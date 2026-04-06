@@ -8,7 +8,7 @@ import type { Pipeline } from "./slots.js";
 
 export type { Pipeline, Strategy, SlotName } from "./slots.js";
 export { runPipeline, noopStrategy, SLOT_ORDER, MULTI_SLOTS } from "./slots.js";
-export { RANDOM, TEMPERATE_CONTINENT, TWO_ISLANDS, ARCHIPELAGO, FLAT_RIVERS, VOLCANIC_ARCHIPELAGO, ALL_PIPELINES } from "./pipeline.js";
+export { RANDOM, TEMPERATE_CONTINENT, TWO_ISLANDS, ARCHIPELAGO, FLAT_RIVERS, VOLCANIC_ARCHIPELAGO, ARCTIC_CONTINENT, KOFU_DEM, YUGAWARA_DEM, HADANO_DEM, YOKOHAMA_DEM, ALL_PIPELINES } from "./pipeline.js";
 export type { StageContext, TerrainStage, BiomeId, BiomeDef } from "./context.js";
 export { createContext, createRng, BiomeRegistry, BIOME_TAGS, registerStandardBiomes } from "./context.js";
 
@@ -42,10 +42,10 @@ export function generateTerrain(
   // パイプライン実行
   runPipeline(pipeline, ctx);
 
-  // バイオーム分類
+  // バイオーム分類（Pipeline に閾値オーバーライドがあれば優先する）
   const classify = createClassifyBiome({
-    waterThreshold: cfg.waterThreshold,
-    mountainThreshold: cfg.mountainThreshold,
+    waterThreshold: pipeline.waterThreshold ?? cfg.waterThreshold,
+    mountainThreshold: pipeline.mountainThreshold ?? cfg.mountainThreshold,
   });
   const biomes = classify(ctx);
 
@@ -82,8 +82,8 @@ export function generateTerrainPreview(
   runPipeline(pipeline, ctx);
 
   const classify = createClassifyBiome({
-    waterThreshold: config.waterThreshold,
-    mountainThreshold: config.mountainThreshold,
+    waterThreshold: pipeline.waterThreshold ?? config.waterThreshold,
+    mountainThreshold: pipeline.mountainThreshold ?? config.mountainThreshold,
   });
   const biomes = classify(ctx);
 

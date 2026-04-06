@@ -273,12 +273,18 @@ function Terrain3DWindow({ game }: { game: Game }) {
       controls.enableDamping = true;
       controls.dampingFactor = 0.1;
 
-      // ライト
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+      // ライト: ambient を低め、key light（太陽相当）を強め、反対側の fill light で影を埋める
+      // これで起伏のレリーフ感が強く出る
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.25);
       scene.add(ambientLight);
-      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
-      dirLight.position.set(-1, 2, -1);
-      scene.add(dirLight);
+      // Key: 北西高め（2D のヒルシェードと同じ方向感）、やや黄色寄り
+      const keyLight = new THREE.DirectionalLight(0xfff0d8, 1.1);
+      keyLight.position.set(-1, 2, -1);
+      scene.add(keyLight);
+      // Fill: 反対側（南東低め）、青寄り（空の散乱光イメージ）
+      const fillLight = new THREE.DirectionalLight(0xa8c0ff, 0.35);
+      fillLight.position.set(1, 0.6, 1);
+      scene.add(fillLight);
 
       let terrainMesh: InstanceType<typeof THREE.Mesh> | null = null;
       let lastCenterTx = -1;
@@ -289,6 +295,7 @@ function Terrain3DWindow({ game }: { game: Game }) {
       /** 地形メッシュを構築する */
       const buildTerrain = (): void => {
         const map = game.world.map;
+        const registry = game.world.biomeRegistry;
         const gameCam = game.camera;
         const centerTx = Math.floor(gameCam.x / 32);
         const centerTy = Math.floor(gameCam.y / 32);
@@ -349,9 +356,41 @@ function Terrain3DWindow({ game }: { game: Game }) {
             const tx = Math.min(map.width - 1, minX + ix * step);
             const ty = Math.min(map.height - 1, minY + iy * step);
             const tile = map.get(tx, ty);
-            raw[idx] = tile.elevation * heightScale;
+            const elev = tile.elevation;
+            raw[idx] = elev * heightScale;
 
-            const [r, g, b] = terrainColorRGB(tile.terrain, tile.elevation);
+            // 2D renderer と同じ色ロジック: tile.terrain を基準にする
+            // terrain === 2 (Water), 1 (Mountain), 0 (Flat), 3 (Sand)
+            let r: number, g: number, b: number;
+            if (tile.terrain === 2) {
+              // 水域: 深さで青の濃淡
+              const depthT = Math.max(0, Math.min(1, (0.2 - elev) / 0.2));
+              r = 30 + (1 - depthT) * 40;
+              g = 60 + (1 - depthT) * 60;
+              b = 150 - depthT * 40;
+            } else if (tile.terrain === 1) {
+              // 山系: 標高ベースの茶→白グラデーション（2D と統一）
+              const mt = Math.max(0, Math.min(1, (elev - 0.4) / 0.5));
+              r = 120 + mt * 100;
+              g = 100 + mt * 110;
+              b = 60 + mt * 170;
+            } else {
+              // 平地: バイオーム色
+              const biomeDef = registry.getById(tile.biomeId);
+              if (biomeDef !== undefined) {
+                [r, g, b] = biomeDef.color;
+              } else {
+                [r, g, b] = terrainColorRGB(tile.terrain, elev);
+              }
+            }
+            // 雪冠: 高標高ほど白く（水域以外）
+            if (tile.terrain !== 2 && elev > 0.7) {
+              const snowT = Math.min(1, (elev - 0.7) / 0.25);
+              r = r * (1 - snowT) + 245 * snowT;
+              g = g * (1 - snowT) + 248 * snowT;
+              b = b * (1 - snowT) + 255 * snowT;
+            }
+
             colors[idx * 3] = r / 255;
             colors[idx * 3 + 1] = g / 255;
             colors[idx * 3 + 2] = b / 255;

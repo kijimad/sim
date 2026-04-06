@@ -113,18 +113,30 @@ export class BiomeRegistry {
  * 標準バイオームタグの定数。
  * タイポ防止のため、strategy 実装ではこれらを参照する。
  */
+/**
+ * 標準バイオームタグ。
+ *
+ * ネームスペース:
+ * - `water.*` - 水域
+ * - `coastal.*` - 海岸部
+ * - `terrain.*` - 平地・低地系の汎用地形
+ * - `mountain.*` - 山系（Highland / Plateau / Canyon）。
+ *   別色で塗ると山脈が派手に変わってしまうので一括して山脈扱い、
+ *   Normal ビューでは高度ベースのグラデーションで表現する。
+ *   ただし内部的には亜種として割当て、将来の差別化（資源・通行コスト等）に備える
+ */
 export const BIOME_TAGS = {
   Hills: "terrain.hills",
-  Highland: "terrain.highland",
+  Highland: "mountain.highland",
   Bay: "water.bay",
   Beach: "coastal.beach",
   Ocean: "water.ocean",
   Island: "terrain.island",
   Lake: "water.lake",
-  Canyon: "terrain.canyon",
+  Canyon: "mountain.canyon",
   Wetland: "terrain.wetland",
   Cliff: "terrain.cliff",
-  Plateau: "terrain.plateau",
+  Plateau: "mountain.plateau",
   Alluvial: "terrain.alluvial",
 } as const;
 

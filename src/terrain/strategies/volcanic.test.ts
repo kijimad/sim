@@ -165,12 +165,24 @@ describe("VOLCANIC_ARCHIPELAGO パイプライン統合", () => {
     expect(coneCount).toBeGreaterThan(0);
   });
 
-  it("TEMPERATE_CONTINENT には火山バイオームが含まれない（隔離性）", () => {
-    // 火山パイプラインを実行しても、他パイプラインの registry を汚染しない
+  it("TEMPERATE_CONTINENT も内部多様性として火山バイオームを登録する", () => {
+    // 設計変更: TEMPERATE_CONTINENT は Minecraft 風の内部多様性モデルになり、
+    // 散在火山を含むため、volcanic バイオームが登録されるようになった。
     const ctxTemperate = createContext(64, 64, 42);
     runPipeline(TEMPERATE_CONTINENT, ctxTemperate);
-    // TEMPERATE_CONTINENT は volcanic.cone を登録しない
-    expect(ctxTemperate.biomeRegistry.has("volcanic.cone")).toBe(false);
-    expect(ctxTemperate.biomeRegistry.has("volcanic.lava_field")).toBe(false);
+    expect(ctxTemperate.biomeRegistry.has("volcanic.cone")).toBe(true);
+    expect(ctxTemperate.biomeRegistry.has("volcanic.lava_field")).toBe(true);
+  });
+
+  it("別 ctx の BiomeRegistry は独立している（ctx 隔離性）", () => {
+    // ctx ごとに新しい registry が作られるので、別 ctx で実行されたパイプラインは
+    // 互いに影響しない。
+    const ctxA = createContext(16, 16, 1);
+    const ctxB = createContext(16, 16, 1);
+    runPipeline(VOLCANIC_ARCHIPELAGO, ctxA);
+    // ctxB には何も走らせていない: volcanic バイオームは登録されていないはず
+    expect(ctxB.biomeRegistry.has("volcanic.cone")).toBe(false);
+    // ctxA と ctxB の registry は別インスタンス
+    expect(ctxA.biomeRegistry).not.toBe(ctxB.biomeRegistry);
   });
 });

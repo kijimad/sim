@@ -104,7 +104,7 @@ export class Game {
       this.notify();
 
       // レンダリング
-      this.renderer.render(this.world.map, this.camera, this.world.viewMode);
+      this.renderer.render(this.world.map, this.camera, this.world.viewMode, this.world.biomeRegistry);
       this.renderCities();
       this.renderer.renderGraph(
         this.world.graph,

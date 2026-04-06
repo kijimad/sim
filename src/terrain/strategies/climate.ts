@@ -1,5 +1,6 @@
 import type { StageContext } from "../context.js";
 import type { Strategy } from "../slots.js";
+import { createGradientNoise } from "../stages/noise.js";
 
 /**
  * 緯度＋卓越風モデルによる気温・降水量の計算。
@@ -32,6 +33,29 @@ export interface LatitudeWindParams {
   readonly evaporationRate?: number;
   /** 陸海判定の標高閾値 */
   readonly waterThreshold?: number;
+  /**
+   * 気温全体のスケール係数（デフォルト 1.0）。
+   * 寒冷大陸には 0.3〜0.5、暑い大陸には 1.0 のままを渡す。
+   * 0 に近いほど全体が寒冷になる（例: 0.4 なら最高気温が 0.4）。
+   */
+  readonly tempScale?: number;
+  /**
+   * 気温ベースのオフセット（デフォルト 0）。
+   * tempScale の後に加算される。[−1, 1] の範囲で効く（最終 clamp で [0, 1]）。
+   */
+  readonly tempBias?: number;
+  /**
+   * 降水量に加えるノイズの振幅（デフォルト 0）。
+   * 正の値にすると低周波 Perlin ノイズで降水分布にムラが加わり、
+   * 同緯度・同標高でも湿潤帯と乾燥帯が混在する。
+   * Holdridge バイオーム（desert / savanna 等）を出現させるのに必要。
+   */
+  readonly precipNoiseAmplitude?: number;
+  /**
+   * 降水ノイズの周波数（デフォルト 2.5）。
+   * 大きいほど細かいパッチになる。
+   */
+  readonly precipNoiseFrequency?: number;
 }
 
 const DEFAULT_PARAMS: Required<LatitudeWindParams> = {
@@ -42,6 +66,10 @@ const DEFAULT_PARAMS: Required<LatitudeWindParams> = {
   baseOceanPrecip: 0.5,
   evaporationRate: 0.08,
   waterThreshold: 0.2,
+  tempScale: 1.0,
+  tempBias: 0.0,
+  precipNoiseAmplitude: 0.0,
+  precipNoiseFrequency: 2.5,
 };
 
 /** 緯度＋卓越風ベースの気候ストラテジ */
@@ -54,7 +82,14 @@ export function latitudeWind(params: LatitudeWindParams = {}): Strategy {
     requires: ["elevation"],
     provides: ["temperature", "precipitation"],
     run: (ctx: StageContext) => {
-      const { width: w, height: h, elevation, temperature, precipitation } = ctx;
+      const { width: w, height: h, elevation, temperature, precipitation, rng } = ctx;
+
+      // 降水ノイズ（precipNoiseAmplitude > 0 のときだけ生成）
+      // 毎 run で rng から作るので、同じ seed なら同じノイズになる
+      let precipNoise: ((x: number, y: number) => number) | null = null;
+      if (cfg.precipNoiseAmplitude > 0) {
+        precipNoise = createGradientNoise(rng);
+      }
 
       // --- 気温: 緯度 + 標高 adiabatic ---
       // y=0 が北（寒）、y=h-1 が南（暖）の線形勾配
@@ -64,7 +99,8 @@ export function latitudeWind(params: LatitudeWindParams = {}): Strategy {
         for (let x = 0; x < w; x++) {
           const i = y * w + x;
           const elev = elevation[i] ?? 0;
-          const t = latFactor * (1 - elev * cfg.lapseRate);
+          const base = latFactor * (1 - elev * cfg.lapseRate);
+          const t = base * cfg.tempScale + cfg.tempBias;
           temperature[i] = Math.max(0, Math.min(1, t));
         }
       }
@@ -95,8 +131,17 @@ export function latitudeWind(params: LatitudeWindParams = {}): Strategy {
 
           // 基礎降水量（陸海で差）
           const base = isLand ? cfg.baseLandPrecip : cfg.baseOceanPrecip;
-          const p = Math.min(1, orographic + base * airMoisture);
-          precipitation[i] = p;
+          let p = orographic + base * airMoisture;
+
+          // 降水ノイズ: 低周波ノイズで湿潤帯と乾燥帯のムラを加える
+          if (precipNoise !== null) {
+            const nx = x / w;
+            const ny = y / h;
+            const nv = precipNoise(nx * cfg.precipNoiseFrequency, ny * cfg.precipNoiseFrequency);
+            p += (nv - 0.5) * 2 * cfg.precipNoiseAmplitude;
+          }
+
+          precipitation[i] = Math.max(0, Math.min(1, p));
 
           // 海上では蒸発で水分回復
           if (!isLand) {

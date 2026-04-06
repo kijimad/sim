@@ -4,57 +4,70 @@ import type { PathNode } from "./pathfinding.js";
 import type { TrainPosition } from "./simulation.js";
 import { getSignalPositions } from "./graph.js";
 import type { TileMap } from "./tilemap.js";
-import type { Terrain } from "./types.js";
+import { Terrain } from "./types.js";
+import type { BiomeRegistry } from "./terrain/biome-registry.js";
 import { getVehicleType } from "./vehicle.js";
 import type { ViewMode } from "./game-world.js";
 
 export const TILE_SIZE = 32;
 const HALF_TILE = TILE_SIZE / 2;
 
-/** バイオームIDごとの表示色 [r, g, b] */
-const BIOME_COLORS: Record<number, [number, number, number]> = {
-  0: [80, 150, 60],    // Hills: 丘陵の緑
-  1: [160, 130, 100],  // Highland: 茶
-  2: [60, 100, 180],   // Bay: 青
-  3: [220, 200, 140],  // Beach: 砂色
-  4: [20, 40, 120],    // Ocean: 深い青
-  5: [80, 160, 80],    // Island: 明るい緑
-  6: [70, 130, 200],   // Lake: 水色
-  7: [140, 80, 60],    // Canyon: 赤茶
-  8: [60, 120, 100],   // Wetland: 暗い緑
-  9: [150, 140, 130],  // Cliff: 灰色
-  10: [140, 160, 100], // Plateau: 黄緑
-  11: [130, 180, 90],  // Alluvial: 明るい緑
-};
-
-/** 地形タイプ + 標高 + ヒルシェード係数から色を返す */
-function terrainColor(terrain: Terrain, elevation: number, shade: number = 1.0): string {
+/**
+ * 地形色を決定する:
+ *
+ * - 水域: 標高ベースのグラデーション青
+ * - 山系バイオーム（BiomeDef.terrainType === Mountain）: 標高ベースの茶〜白
+ *   Highland / Plateau / Canyon / Cliff / Glacier / Volcanic Cone 等。
+ *   biome 色で塗ると「サイケ」になるので、山は一律に高度で起伏を表現する
+ * - 平地・砂地バイオーム: BiomeRegistry の BiomeDef.color を使い、
+ *   Hills / Tundra / Desert / Wetland / Alluvial 等の気候・地形差を色で区別する
+ * - 雪冠: 標高 >0.7 で白ブレンド（どの地形でも）
+ */
+function terrainColor(
+  terrain: Terrain,
+  biomeId: number,
+  elevation: number,
+  registry: BiomeRegistry | null,
+  shade: number = 1.0,
+): string {
   let r: number, g: number, b: number;
-  // Water
-  if (terrain === 2) {
+
+  // BiomeDef を引く（registry がなければ undefined）
+  const def = registry !== null ? registry.getById(biomeId) : undefined;
+  // biome 定義の terrainType を優先、無ければ classify 済みの terrain にフォールバック
+  const effectiveTerrain: Terrain = def?.terrainType ?? terrain;
+
+  if (effectiveTerrain === Terrain.Water) {
+    // 水域は標高ベースのグラデーション青
     const t = Math.max(0, Math.min(1, elevation / 0.3));
     r = 30 + t * 30;
     g = 55 + t * 50;
     b = 130 + t * 50;
-  // Sand
-  } else if (terrain === 3) {
-    const t = Math.max(0, Math.min(1, elevation));
-    r = 210 + t * 30;
-    g = 190 + t * 20;
-    b = 130 + t * 30;
-  // Mountain
-  } else if (terrain === 1) {
+  } else if (effectiveTerrain === Terrain.Mountain) {
+    // 山系: 標高ベース（茶→白のグラデーション）。biome 色は使わない
     const t = Math.max(0, Math.min(1, (elevation - 0.4) / 0.5));
     r = 120 + t * 100;
     g = 100 + t * 110;
     b = 60 + t * 170;
-  // Flat: 連続グラデーション
   } else {
-    const t = Math.max(0, Math.min(1, elevation));
-    r = 40 + t * 130;
-    g = 100 + t * 60 - t * t * 40;
-    b = 30 + t * 30;
+    // 平地・砂地: レジストリから biome 固有の色を取得
+    if (def !== undefined) {
+      [r, g, b] = def.color;
+    } else if (effectiveTerrain === Terrain.Sand) {
+      r = 220; g = 200; b = 140;
+    } else {
+      r = 100; g = 150; b = 70;
+    }
   }
+
+  // 雪冠: 標高 >0.7 で白へブレンド（山地・雪原等で高所が白く）
+  if (elevation > 0.7 && effectiveTerrain !== Terrain.Water) {
+    const snowT = Math.min(1, (elevation - 0.7) / 0.25);
+    r = r * (1 - snowT) + 245 * snowT;
+    g = g * (1 - snowT) + 248 * snowT;
+    b = b * (1 - snowT) + 255 * snowT;
+  }
+
   // ヒルシェード適用（0.4〜1.4 の範囲でクランプ）
   const s = Math.max(0.4, Math.min(1.4, shade));
   return rgb(r * s, g * s, b * s);
@@ -144,7 +157,7 @@ export class Renderer {
     ctx.fillText(text, x, y);
   }
 
-  render(map: TileMap, camera: Camera, viewMode: ViewMode = "normal"): void {
+  render(map: TileMap, camera: Camera, viewMode: ViewMode = "normal", biomeRegistry: BiomeRegistry | null = null): void {
     const { ctx, canvas } = this;
     const cw = canvas.width;
     const ch = canvas.height;
@@ -192,14 +205,16 @@ export class Renderer {
         const shade = 1.0 + (hdx * -0.707 + hdy * -0.707) * 0.5;
 
         if (viewMode === "biome") {
-          const bc = BIOME_COLORS[tile.biomeId] ?? [128, 128, 128];
+          // バイオーム専用ビュー: 陸海問わず biome 色を表示（水面含め全部 biome 駆動）
+          const def = biomeRegistry !== null ? biomeRegistry.getById(tile.biomeId) : undefined;
+          const [br, bg, bb] = def !== undefined ? def.color : [128, 128, 128];
           const s = Math.max(0.5, Math.min(1.3, shade));
-          ctx.fillStyle = rgb(bc[0] * s, bc[1] * s, bc[2] * s);
+          ctx.fillStyle = rgb(br * s, bg * s, bb * s);
         } else if (viewMode === "hillshade") {
           const v = Math.max(0, Math.min(255, Math.round(shade * 128)));
           ctx.fillStyle = rgb(v, v, v);
         } else {
-          ctx.fillStyle = terrainColor(tile.terrain, tile.elevation, shade);
+          ctx.fillStyle = terrainColor(tile.terrain, tile.biomeId, tile.elevation, biomeRegistry, shade);
         }
 
         const screenX = Math.floor(tx * tileScreenSize + offsetX);

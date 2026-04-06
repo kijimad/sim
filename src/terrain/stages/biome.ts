@@ -306,7 +306,7 @@ export function assignBiomes(ctx: StageContext): void {
   placeBeaches(w, h, elevation, biomeId, beachNoise, cos3, sin3, ox3, oy3, biomeScale, WATER_TH, HILLS, BEACH);
 
   // 沖積平野配置: 大河川沿いの低地を Alluvial にする
-  placeAlluvial(w, h, elevation, flow, biomeId, WATER_TH, HILLS, WETLAND, ALLUVIAL);
+  placeAlluvial(w, h, elevation, flow, biomeId, WATER_TH, HILLS, WETLAND, ALLUVIAL, rng, ctx.metadata);
 }
 
 /**
@@ -319,14 +319,22 @@ function placeAlluvial(
   elevation: Float32Array, flow: Float32Array,
   biomeId: Uint8Array, waterTh: number,
   HILLS: number, WETLAND: number, ALLUVIAL: number,
+  rng: () => number,
+  metadata: Map<string, unknown>,
 ): void {
-  const DX4 = [0, 1, 0, -1];
-  const DY4 = [-1, 0, 1, 0];
+  // 8 方向 BFS（斜めに 1.414 加算）で菱形パターンを避け自然な楕円状の
+  // 拡張を作る
+  const DX8 = [0, 1, 1, 1, 0, -1, -1, -1];
+  const DY8 = [-1, -1, 0, 1, 1, 1, 0, -1];
+  const DIST8 = [1, 1.414, 1, 1.414, 1, 1.414, 1, 1.414];
+
   const FLOW_MIN = 1000;
   const ALLUVIAL_RADIUS = Math.max(8, Math.floor(Math.min(w, h) * 0.04));
 
-  // 大河川からの距離をBFSで計算する
+  // 大河川からの距離を 8 方向 BFS で計算する
   const riverDist = new Float32Array(w * h).fill(Infinity);
+  // ダイクストラ風の優先処理のため、同じセルが複数回訪問される可能性がある
+  // → 既に短い距離が設定されていたらスキップする
   const queue: number[] = [];
   for (let i = 0; i < w * h; i++) {
     if ((flow[i] ?? 0) > FLOW_MIN) {
@@ -341,17 +349,22 @@ function placeAlluvial(
     const cd = riverDist[ci] ?? 0;
     if (cd >= ALLUVIAL_RADIUS) continue;
     const cx = ci % w; const cy = (ci - cx) / w;
-    for (let d = 0; d < 4; d++) {
-      const nnx = cx + (DX4[d] ?? 0); const nny = cy + (DY4[d] ?? 0);
+    for (let d = 0; d < 8; d++) {
+      const nnx = cx + (DX8[d] ?? 0); const nny = cy + (DY8[d] ?? 0);
       if (nnx < 0 || nnx >= w || nny < 0 || nny >= h) continue;
       const ni = nny * w + nnx;
-      const nd = cd + 1;
+      const nd = cd + (DIST8[d] ?? 1);
       if (nd < (riverDist[ni] ?? Infinity)) {
         riverDist[ni] = nd;
         queue.push(ni);
       }
     }
   }
+
+  // 低周波ノイズで境界にムラを加える（ノイズ閾値を超えた cell だけ Alluvial に）
+  const boundaryNoise = createGradientNoise(rng);
+  const noiseOffX = rng() * 100;
+  const noiseOffY = rng() * 100;
 
   // 大河川に近い低地の Hills を Alluvial に変更する
   for (let i = 0; i < w * h; i++) {
@@ -361,10 +374,40 @@ function placeAlluvial(
     const elev = elevation[i] ?? 0;
     // 低い場所ほど沖積平野になりやすい（標高に応じた距離閾値）
     const maxDist = ALLUVIAL_RADIUS * Math.max(0, 1 - (elev - waterTh) / 0.2);
-    if (dist <= maxDist) {
+    // 境界ノイズ: 0.8-1.2 の範囲で穏やかに変動
+    const x = i % w; const y = (i - x) / w;
+    const nv = boundaryNoise((x / w) * 4 + noiseOffX, (y / h) * 4 + noiseOffY);
+    const noisyMaxDist = maxDist * (0.8 + nv * 0.4);
+    if (dist <= noisyMaxDist) {
       biomeId[i] = ALLUVIAL;
     }
   }
+
+  // 形態学的クリーンアップ: 8 近傍に Alluvial が 3 未満の孤立セル・枝状残骸を
+  // Hills に戻す。ノイズ境界で生じる 1 マス幅のアーティファクトを除去する
+  const DX8c = [0, 1, 1, 1, 0, -1, -1, -1];
+  const DY8c = [-1, -1, 0, 1, 1, 1, 0, -1];
+  const toRevert: number[] = [];
+  for (let i = 0; i < w * h; i++) {
+    if (biomeId[i] !== ALLUVIAL) continue;
+    const cx = i % w; const cy = (i - cx) / w;
+    let neighbors = 0;
+    for (let d = 0; d < 8; d++) {
+      const nx = cx + (DX8c[d] ?? 0);
+      const ny = cy + (DY8c[d] ?? 0);
+      if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+      if (biomeId[ny * w + nx] === ALLUVIAL) neighbors++;
+    }
+    if (neighbors < 3) toRevert.push(i);
+  }
+  for (const i of toRevert) {
+    biomeId[i] = HILLS;
+  }
+
+  // 後段の applyAlluvialFlatten が距離ベースの gradient 平坦化に使えるよう
+  // riverDist を metadata に保存する
+  metadata.set("alluvial.riverDist", riverDist);
+  metadata.set("alluvial.radius", ALLUVIAL_RADIUS);
 }
 
 /**
@@ -374,17 +417,42 @@ function placeAlluvial(
 /** biomeFeatures フェーズで共通に使う水面閾値 */
 export const BIOME_WATER_TH = 0.2;
 
-/** 沖積平野の平坦化: 大河川に向かってなだらかに下がる下町のような地形 */
+/**
+ * 沖積平野の平坦化: 大河川に向かってなだらかに下がる下町のような地形。
+ *
+ * 平坦化強度は placeAlluvial が保存した riverDist を使って距離に応じた
+ * gradient にする: 河川の近くは強く平坦化され、境界付近では穏やかに
+ * 既存地形にフェードする。これで矩形パターンが見えなくなる。
+ */
 export function applyAlluvialFlatten(ctx: StageContext): void {
-  const { elevation, biomeId, biomeRegistry } = ctx;
+  const { elevation, biomeId, biomeRegistry, metadata } = ctx;
   const ALLUVIAL = biomeRegistry.idOf(BIOME_TAGS.Alluvial);
   const size = elevation.length;
+
+  // placeAlluvial が保存した距離情報を取得
+  const riverDist = metadata.get("alluvial.riverDist") as Float32Array | undefined;
+  const radius = metadata.get("alluvial.radius") as number | undefined;
+
   for (let i = 0; i < size; i++) {
     if (biomeId[i] !== ALLUVIAL) continue;
     const elev = elevation[i] ?? 0;
-    // 標高を水面に近づける（起伏を潰す）
     const target = BIOME_WATER_TH + 0.05;
-    elevation[i] = target + (elev - target) * 0.3;
+
+    // 河川からの距離に応じた gradient 強度
+    // 近い (dist=0) → strong=0.75 (元標高の 25% を保持、強い平坦化)
+    // 遠い (dist=radius) → strong=0.15 (ほぼ元のまま、自然にフェードアウト)
+    let strength = 0.75;
+    if (riverDist !== undefined && radius !== undefined) {
+      const dist = riverDist[i] ?? Infinity;
+      if (dist !== Infinity) {
+        const t = Math.max(0, Math.min(1, dist / radius));
+        // smoothstep で境界近辺を滑らかに
+        const smoothT = t * t * (3 - 2 * t);
+        strength = 0.75 * (1 - smoothT) + 0.15 * smoothT;
+      }
+    }
+
+    elevation[i] = target + (elev - target) * (1 - strength);
   }
 }
 
